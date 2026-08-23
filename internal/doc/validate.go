@@ -19,7 +19,7 @@ type Limits struct {
 
 func (d Document) Validate(limits Limits) error {
 	if utf8.RuneCountInString(d.Text) > limits.MaxRunes {
-		invalidf("text is too long, limit is %d charactes", limits.MaxRunes)
+		return invalidf("text is too long, limit is %d characters", limits.MaxRunes)
 	}
 
 	// Empty document
