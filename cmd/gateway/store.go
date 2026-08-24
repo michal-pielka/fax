@@ -1,10 +1,10 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 )
@@ -36,7 +36,7 @@ func NewStore() *Store {
 
 func (s *Store) Add(d doc.Document) Job {
 	job := Job{
-		ID:        newID(),
+		ID:        uuid.NewString(),
 		Status:    StatusQueued,
 		Document:  d,
 		CreatedAt: time.Now().UTC(),
@@ -56,14 +56,4 @@ func (s *Store) Get(id string) (Job, bool) {
 	job, ok := s.jobs[id]
 
 	return job, ok
-}
-
-// newID returns 16 random bytes as hex. crypto/rand.Read never fails on
-// Linux, and the stdlib panics internally if the OS entropy source breaks,
-// so there is no error to handle here.
-func newID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-
-	return hex.EncodeToString(b)
 }
