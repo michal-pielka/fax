@@ -1,0 +1,3 @@
+# Secrets and generated broker credentials
+.env
+deploy/mosquitto/passwd
