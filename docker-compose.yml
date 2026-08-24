@@ -1,0 +1,75 @@
+# Homelab stack. Two things are reachable from the tailnet:
+#
+#   caddy:8080      the site, and /api behind it
+#   mosquitto:1883  where the ESP32 -- or your laptop pretending to be it -- connects
+#
+# The gateway, renderer and dispatcher have no published ports at all. They talk
+# to each other over the internal compose network and nothing else can reach
+# them, which is what makes the /internal/* paths safe to leave unauthenticated.
+
+name: fax
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      # BIND_ADDR should be this host's tailnet address (100.x.y.z), so the
+      # stack is reachable over the tailnet and nowhere else. 0.0.0.0 exposes
+      # it to your whole LAN.
+      - "${BIND_ADDR:-0.0.0.0}:8080:8080"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - caddy-data:/data
+    depends_on: [gateway]
+
+  gateway:
+    build:
+      context: ./server
+      dockerfile: cmd/gateway/Dockerfile
+    restart: unless-stopped
+    command:
+      - "-addr=:8080"
+      - "-renderer=http://renderer:8081"
+      - "-dispatcher=http://dispatcher:8082"
+    depends_on: [renderer, dispatcher]
+
+  renderer:
+    build:
+      context: ./server
+      dockerfile: cmd/renderer/Dockerfile
+    restart: unless-stopped
+
+  dispatcher:
+    build:
+      context: ./server
+      dockerfile: cmd/dispatcher/Dockerfile
+    restart: unless-stopped
+    command:
+      - "-addr=:8082"
+      - "-broker=tcp://mosquitto:1883"
+      - "-username=${MQTT_USERNAME:-backend}"
+      - "-device=${DEVICE_ID:-printer-1}"
+    environment:
+      MQTT_PASSWORD: "${MQTT_PASSWORD:?set MQTT_PASSWORD in .env}"
+    # The dispatcher exits if it cannot reach the broker at startup, which is
+    # deliberate -- it has no purpose without one. depends_on only orders
+    # container starts, not readiness, so the restart policy is what actually
+    # covers the second or two before mosquitto is listening.
+    depends_on: [mosquitto]
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:1883:1883"
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/mosquitto/acl:/mosquitto/config/acl:ro
+      - ./deploy/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - mosquitto-data:/mosquitto/data
+
+volumes:
+  caddy-data:
+  mosquitto-data:

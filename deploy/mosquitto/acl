@@ -1,0 +1,14 @@
+# Two accounts, each able to do only its half of the exchange.
+#
+# The ESP32's credentials are compiled into firmware sitting in a flat, so
+# assume they can be extracted. With this split, whoever has them can watch
+# state and receive jobs, but cannot publish a job -- so they cannot make the
+# printer print. A single shared account would let them.
+
+user backend
+topic write fax/+/job/+
+topic read  fax/+/state
+
+user printer
+topic read  fax/+/job/+
+topic write fax/+/state
