@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thermal Press</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="roll" id="roll">
+  <div class="paper" id="paper">
+    <div class="zone fixed">
+      <div class="big">MICHAL&nbsp;P</div>
+      <div>ul. Przykladowa 12</div>
+      <div>Krakow</div>
+    </div>
+    <div class="divider" id="divTop"></div>
+
+    <div class="zone body" id="body" contenteditable="true" spellcheck="false"
+         aria-label="Receipt body"><div class="ln"><br></div></div>
+
+    <div class="divider" id="divBot"></div>
+    <div class="zone fixed">
+      <div>*** THANK YOU ***</div>
+      <div>fax.pielka.sh</div>
+    </div>
+  </div>
+</div>
+
+<div class="hint">select lines to format &nbsp;·&nbsp; ⌘⏎ to print</div>
+
+<div class="pop" id="tools" role="toolbar" aria-label="Line formatting"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,209 @@
+  /* The printer's own face, inlined as a data URI: nothing to install. */
+  @font-face {
+    font-family: 'VT323';
+    src: url('fonts/VT323.woff2') format('woff2');
+    font-display: block;
+  }
+
+  /* A deliberate single-theme page: a white receipt on a white table, where
+     the shadow is the only thing separating them. */
+  :root {
+    --table: #f5f4f2;
+    --paper: #ffffff;
+    --ink: #2a2724;
+    --ink-dim: #2a27248c;
+    --ink-ghost: #2a27242e;
+    /* Paper width is derived from these two and nothing else: the base text
+       size and how many characters fit on a line. The enlarged sizes below
+       are multiples of the base and deliberately do not affect the width. */
+    --font-size: clamp(19px, 3vw, 27px);
+    --cols: 32;
+    /* TTL printers leave a small unprintable margin either side.
+       Horizontal is in ch so it scales with character width, vertical in em
+       so it scales with line height; both therefore track --font-size. */
+    --pad-x: 3ch;
+    --pad-y: 1.5em;
+
+    /* Vertical gap between lines, as a multiple of the text size. The printer's
+       equivalent is ESC 3 n, which sets spacing in 0.125mm dots (default 30).
+       Enlarged lines take the tighter value: big text needs proportionally
+       less air between rows. */
+    /* The receipt is a fixed size. This many lines of writing space, and when
+       they are full they are full -- the paper does not grow. */
+    --rows: 9;
+    --line-height: 1.00;
+    --line-height-big: 1.00;
+
+    /* Enlargement multipliers, matching GS ! n. */
+    --mult-w: 2;
+    --mult-h2: 2;
+    --mult-h3: 3;
+    /* How far the receipt floats above the table. Every shadow layer scales
+       from this, so one number tunes the whole effect. */
+    --lift: 1;
+    /* Shadows tinted with the ink's warm dark rather than pure black; black on
+       a warm white table reads as a hole punched in it, not a shadow. */
+    --shade: 42 39 36;
+
+    /* One serration. viewBox + preserveAspectRatio='none' let the triangle
+       stretch to whatever mask-size asks for, so these two numbers alone
+       control the tear: width is the pitch, depth is how far it bites in. */
+    --tooth-w: 7px;
+    --tooth-d: 3.5px;
+    --tooth-top: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2 1' preserveAspectRatio='none'%3E%3Cpath d='M0 1 H2 L1 0 Z' fill='%23000'/%3E%3C/svg%3E");
+    --tooth-bot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2 1' preserveAspectRatio='none'%3E%3Cpath d='M0 0 H2 L1 1 Z' fill='%23000'/%3E%3C/svg%3E");
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100svh;
+    /* A flat fill gives the shadow nothing to sit on. A very shallow pool of
+       light behind the receipt reads as a lit surface receding at the edges. */
+    background: var(--table);
+    background-image: radial-gradient(70% 55% at 50% 42%,
+      #ffffff 0%, var(--table) 55%, #edebe7 100%);
+    background-attachment: fixed;
+    color: var(--ink);
+    font-family: 'VT323', ui-monospace, monospace;
+    /* `margin: auto` on the child rather than `align-items: center`: it centres
+       on both axes and still scrolls instead of clipping the top once the
+       receipt grows taller than the viewport. */
+    display: flex;
+    padding: 2.5rem 1rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The shadow is a drop-shadow on the wrapper, not a box-shadow on the paper,
+     so it traces the torn teeth instead of a rectangle. */
+  .roll {
+    position: relative;
+    margin: auto;
+    /* An even shadow on all four sides: every layer has zero offset, so each
+       one radiates equally rather than being pushed downward. The four blurs
+       still stack from tight to wide, which is what keeps it reading as depth
+       instead of a flat halo -- but with no light direction, so the top edge
+       and the bottom edge get exactly the same shade. */
+    filter:
+      drop-shadow(0 0 calc(2px * var(--lift))  rgb(var(--shade) / 0.05))
+      drop-shadow(0 0 calc(7px * var(--lift))  rgb(var(--shade) / 0.055))
+      drop-shadow(0 0 calc(17px * var(--lift)) rgb(var(--shade) / 0.06))
+      drop-shadow(0 0 calc(38px * var(--lift)) rgb(var(--shade) / 0.07));
+  }
+
+  .paper {
+    /* 1ch here is one character of the base font, because .paper is what sets
+       the base font-size; enlarged lines inside cannot widen the paper.
+       box-sizing: border-box means the content box stays exactly --cols wide. */
+    width: calc(var(--cols) * 1ch + var(--pad-x) * 2);
+    background: var(--paper);
+    font-size: var(--font-size);
+    line-height: var(--line-height);
+    padding: var(--pad-y) var(--pad-x);
+
+    /* Teeth are cut out of the paper by a mask rather than drawn by separate
+       strips, so there is no join to show through. Each SVG tile is exactly one
+       tooth and repeats at its natural size, never stretched, which is what
+       keeps every notch the full depth. */
+    -webkit-mask-image: var(--tooth-top), var(--tooth-bot), linear-gradient(#000 0 0);
+    -webkit-mask-size: var(--tooth-w) var(--tooth-d), var(--tooth-w) var(--tooth-d), 100% calc(100% - var(--tooth-d) * 2);
+    -webkit-mask-position: 0 0, 0 100%, 0 var(--tooth-d);
+    -webkit-mask-repeat: repeat-x, repeat-x, no-repeat;
+    mask-image: var(--tooth-top), var(--tooth-bot), linear-gradient(#000 0 0);
+    mask-size: var(--tooth-w) var(--tooth-d), var(--tooth-w) var(--tooth-d), 100% calc(100% - var(--tooth-d) * 2);
+    mask-position: 0 0, 0 100%, 0 var(--tooth-d);
+    mask-repeat: repeat-x, repeat-x, no-repeat;
+  }
+
+
+  .fixed { text-align: center; color: var(--ink-dim); user-select: none; }
+  .fixed .big { font-size: 2em; line-height: 1.1; color: var(--ink); }
+  .divider { text-align: center; white-space: pre; overflow: hidden; color: var(--ink-ghost); }
+
+  .body {
+    height: calc(var(--rows) * 1em * var(--line-height));
+    overflow: hidden;
+    outline: none;
+    /* The printer hard-breaks at column 32 mid-word; browsers break on words.
+       Without `anywhere` the preview lies on exactly the inputs people notice. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-variant-ligatures: none;
+    caret-color: var(--ink);
+  }
+  .body:has(> .ln:only-child:empty)::before,
+  .body:empty::before {
+    content: 'start typing…';
+    color: var(--ink-ghost);
+    pointer-events: none;
+  }
+
+  .ln { min-height: calc(1em * var(--line-height)); }
+  .ln[data-bold="1"] { font-weight: 700; text-shadow: 0.4px 0 0 currentColor; }
+  .ln[data-under="1"] { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  .ln[data-under="2"] { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+  .ln[data-strike="1"] { text-decoration: line-through; }
+  .ln[data-under="1"][data-strike="1"],
+  .ln[data-under="2"][data-strike="1"] { text-decoration: underline line-through; }
+  .ln[data-inv="1"] { background: var(--ink); color: var(--paper); }
+  .ln[data-align="center"] { text-align: center; }
+  .ln[data-align="right"] { text-align: right; }
+  .ln[data-w="2"] {
+    transform: scaleX(var(--mult-w));
+    transform-origin: 0 50%;
+    width: calc(100% / var(--mult-w));
+  }
+  .ln[data-align="center"][data-w="2"] { transform-origin: 50% 50%; margin: 0 auto; }
+  .ln[data-align="right"][data-w="2"] {
+    transform-origin: 100% 50%;
+    margin-left: calc(100% - 100% / var(--mult-w));
+  }
+  .ln[data-h="2"] { font-size: calc(var(--font-size) * var(--mult-h2)); line-height: var(--line-height-big); }
+  .ln[data-h="3"] { font-size: calc(var(--font-size) * var(--mult-h3)); line-height: var(--line-height-big); }
+
+  /* Chrome exists only while it is being used. */
+  .pop {
+    position: absolute; z-index: 50; display: none;
+    background: var(--paper);
+    border-radius: 3px;
+    box-shadow: 0 1px 2px #00000014, 0 10px 26px -6px #00000026;
+    font-family: 'VT323', ui-monospace, monospace;
+    gap: 1px; padding: 3px;
+  }
+  .pop.on { display: flex; }
+
+  #tools button {
+    font: inherit; font-size: 15px; color: var(--ink-dim);
+    background: transparent; border: 0; border-radius: 2px;
+    padding: 0.3rem 0.4rem; min-width: 30px; cursor: pointer;
+    transition: background 110ms, color 110ms;
+  }
+  #tools button:hover { background: #2a27240f; color: var(--ink); }
+  #tools button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  #tools .sep { width: 1px; background: var(--ink-ghost); margin: 4px 3px; }
+
+  /* The caret is the focus indicator on the paper; an outline round the
+     editable region is the one bit of chrome that cannot be dismissed. */
+  #tools button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .body:focus, .body:focus-visible { outline: none; }
+
+  /* Fades out and never returns; the page is bare after four seconds. */
+  .hint {
+    position: fixed; left: 0; right: 0; bottom: 1.75rem;
+    text-align: center; font-size: 14px; color: var(--ink-ghost);
+    pointer-events: none;
+    animation: dim 900ms 4s forwards;
+  }
+  @keyframes dim { to { opacity: 0; } }
+
+  /* Stepped, not smooth: a stepper motor advances paper in discrete rows. */
+  @keyframes feed-out { to { transform: translateY(-118vh); } }
+  @keyframes feed-in { from { transform: translateY(-40vh); } }
+  .roll.out { animation: feed-out 760ms steps(16, end) forwards; }
+  .roll.in { animation: feed-in 420ms steps(9, end); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+  }
