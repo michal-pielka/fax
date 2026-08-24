@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
     ports:
       # BIND_ADDR should be this host's tailnet address (100.x.y.z), so the
-      # stack is reachable over the tailnet and nowhere else. 0.0.0.0 exposes
+      # site is reachable over the tailnet and nowhere else. 0.0.0.0 exposes
       # it to your whole LAN.
       - "${BIND_ADDR:-0.0.0.0}:8080:8080"
     volumes:
@@ -63,7 +63,18 @@ services:
     image: eclipse-mosquitto:2
     restart: unless-stopped
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:1883:1883"
+      # Bound separately from the site, and NOT to the tailnet address.
+      #
+      # The ESP32 cannot join a tailnet -- it is a plain LAN device -- so a
+      # 100.x bind would put the broker somewhere the printer can never
+      # reach. This has to listen where the ESP32 lives.
+      #
+      # 0.0.0.0 means the whole LAN can see port 1883. That is acceptable
+      # because the broker requires credentials and enforces an ACL, and it
+      # stops mattering once the broker moves to the VPS and the ESP32
+      # connects out over TLS. Set MQTT_BIND_ADDR to this host's LAN address
+      # to narrow it to one interface.
+      - "${MQTT_BIND_ADDR:-0.0.0.0}:1883:1883"
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./deploy/mosquitto/acl:/mosquitto/config/acl:ro
