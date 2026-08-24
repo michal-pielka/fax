@@ -26,7 +26,7 @@ services:
 
   gateway:
     build:
-      context: ./server
+      context: ./backend
       dockerfile: cmd/gateway/Dockerfile
     restart: unless-stopped
     command:
@@ -37,13 +37,13 @@ services:
 
   renderer:
     build:
-      context: ./server
+      context: ./backend
       dockerfile: cmd/renderer/Dockerfile
     restart: unless-stopped
 
   dispatcher:
     build:
-      context: ./server
+      context: ./backend
       dockerfile: cmd/dispatcher/Dockerfile
     restart: unless-stopped
     command:

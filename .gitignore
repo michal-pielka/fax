@@ -1,3 +1,10 @@
+# Rust build output. No leading slash: these live in ttl/ and usb/, not at the
+# root, and /target would match neither.
+target/
+.embuild/
+
+.vscode/
+
 # Secrets and generated broker credentials
 .env
 deploy/mosquitto/passwd
