@@ -3,13 +3,17 @@
 //! Credentials are baked in at build time, so a missing one is a compile
 //! error rather than firmware that silently ships without them:
 //!
-//!   WIFI_SSID=... WIFI_PASS=... MQTT_URL=mqtt://192.168.0.251:1883 \
-//!   MQTT_PASS=... cargo run --release
+//!   WIFI_SSID=... WIFI_PASS=... MQTT_PASS=... cargo run --release
+//!
+//! The broker address is not among them -- it is fixed infrastructure, not a
+//! secret, so it is a constant below and cannot be flashed wrong.
 
 pub const WIFI_SSID: &str = env!("WIFI_SSID");
 pub const WIFI_PASS: &str = env!("WIFI_PASS");
 
-pub const MQTT_URL: &str = env!("MQTT_URL");
+/// Hardcoded, and a hostname rather than an IP on purpose: rebuilding or
+/// moving the VPS is then a DNS change instead of a USB cable and a reflash.
+pub const MQTT_URL: &str = "mqtts://fax.pielka.sh:8883";
 pub const MQTT_PASS: &str = env!("MQTT_PASS");
 pub const MQTT_USER: &str = "printer";
 pub const CLIENT_ID: &str = "fax-printer-1";

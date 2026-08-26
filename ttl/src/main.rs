@@ -24,6 +24,12 @@ fn main() -> Result<(), EspError> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
+    // Logged before anything can fail, so a topic that disagrees with the
+    // server is visible even when the connection never comes up.
+    log::info!("broker    {}", config::MQTT_URL);
+    log::info!("subscribe {}", config::JOB_TOPIC);
+    log::info!("state     {}", config::STATE_TOPIC);
+
     let peripherals = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
@@ -50,10 +56,6 @@ fn main() -> Result<(), EspError> {
     let _sntp = time::sync_blocking(std::time::Duration::from_secs(15))?;
 
     let (mut client, events) = mqtt::connect()?;
-
-    log::info!("broker    {}", config::MQTT_URL);
-    log::info!("subscribe {}", config::JOB_TOPIC);
-    log::info!("state     {}", config::STATE_TOPIC);
 
     // All client and printer work happens on this thread. Doing any of it in
     // the MQTT callback deadlocks -- see mqtt.rs.
