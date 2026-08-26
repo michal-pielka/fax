@@ -11,9 +11,15 @@
 pub const WIFI_SSID: &str = env!("WIFI_SSID");
 pub const WIFI_PASS: &str = env!("WIFI_PASS");
 
-/// Hardcoded, and a hostname rather than an IP on purpose: rebuilding or
-/// moving the VPS is then a DNS change instead of a USB cable and a reflash.
-pub const MQTT_URL: &str = "mqtts://fax.pielka.sh:8883";
+/// Websockets, not plain MQTT, and behind Caddy on 443 rather than a broker
+/// port of its own. Caddy is an HTTP proxy and cannot route plain MQTT, so
+/// this is what lets the broker sit behind the one ingress -- and it makes the
+/// certificate Caddy's problem rather than something to share between
+/// containers and renew every ninety days.
+///
+/// A hostname rather than an IP on purpose: moving the VPS is then a DNS
+/// change instead of a USB cable and a reflash.
+pub const MQTT_URL: &str = "wss://fax.pielka.sh/mqtt";
 pub const MQTT_PASS: &str = env!("MQTT_PASS");
 pub const MQTT_USER: &str = "printer";
 pub const CLIENT_ID: &str = "fax-printer-1";
