@@ -1,6 +1,10 @@
 # Rust often needs a bit of an extra main task stack size compared to C (the default is 3K)
 # You might have to increase this further if you allocate large stack variables in the main task
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+#
+# Raised from the template's 8192 for TLS: an mbedTLS handshake needs tens of
+# KB of stack, and overflowing shows up as a panic mid-connect rather than
+# anything mentioning certificates.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 
 # Increase a bit these stack sizes as they are also a bit too small by default
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
@@ -10,3 +14,10 @@ CONFIG_FREERTOS_IDLE_TASK_STACKSIZE=4096
 # that allocate large stack variables; or better yet - use 
 # `std::thread::Builder::new().stack_size(XXX)` for spawning
 CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
+
+# --- TLS ---
+
+# The Mozilla root bundle that crt_bundle_attach verifies against. Without it
+# every mqtts:// connection fails with an unknown-CA error.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y

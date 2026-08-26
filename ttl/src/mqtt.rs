@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver};
 use esp_idf_svc::mqtt::client::{
     EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
-use esp_idf_svc::sys::EspError;
+use esp_idf_svc::sys::{esp_crt_bundle_attach, EspError};
 
 use crate::config;
 
@@ -38,6 +38,15 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
         // Clean session: the broker must NOT hold jobs for us while we are
         // unplugged, or reconnecting would print hours of backlog at once.
         disable_clean_session: false,
+
+        // Verify the broker against ESP-IDF's built-in Mozilla root bundle,
+        // which includes Let's Encrypt. Pinning one certificate instead would
+        // be smaller, but would break every time the cert is renewed.
+        //
+        // This only takes effect for an mqtts:// URL; with mqtt:// the
+        // connection is plaintext regardless, so the scheme in MQTT_URL is
+        // what actually decides whether any of this matters.
+        crt_bundle_attach: Some(esp_crt_bundle_attach),
 
         lwt: Some(LwtConfiguration {
             topic: config::STATE_TOPIC,

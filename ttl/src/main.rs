@@ -8,6 +8,7 @@
 mod config;
 mod mqtt;
 mod printer;
+mod time;
 mod wifi;
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -42,6 +43,11 @@ fn main() -> Result<(), EspError> {
         config::WIFI_SSID,
         config::WIFI_PASS,
     )?;
+
+    // Before MQTT, not after: TLS checks certificate dates and this board has
+    // no battery-backed clock, so an unsynced device fails every handshake.
+    // Kept alive so the clock keeps being corrected.
+    let _sntp = time::sync_blocking(std::time::Duration::from_secs(15))?;
 
     let (mut client, events) = mqtt::connect()?;
 
