@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -40,11 +41,21 @@ func TestRenderEndpoint(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Round-tripping through JSON has to preserve the bytes exactly: they are
-	// not valid UTF-8, and a string-typed field would have replaced the high
-	// bytes with U+FFFD somewhere along the way.
-	if want := "\x1b@hi\x1bd\x03"; string(out.Payload) != want {
-		t.Errorf("payload = %q, want %q", out.Payload, want)
+	// What the bytes mean is internal/render's business and is tested there.
+	// This checks the two things the HTTP layer is responsible for: that the
+	// document reached the renderer, and that the bytes survived JSON intact.
+	// They are not valid UTF-8, so a string-typed field would have replaced
+	// the high ones with U+FFFD along the way.
+	if !bytes.HasPrefix(out.Payload, []byte{0x1b, '@'}) {
+		t.Errorf("payload does not begin with ESC @: %q", out.Payload)
+	}
+
+	if !bytes.Contains(out.Payload, []byte("hi")) {
+		t.Errorf("payload does not contain the submitted text: %q", out.Payload)
+	}
+
+	if !bytes.Contains(out.Payload, []byte{0x1d, '!', 0x11}) {
+		t.Errorf("payload is missing the header's double-width title: %q", out.Payload)
 	}
 }
 

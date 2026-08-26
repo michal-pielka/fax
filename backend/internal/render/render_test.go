@@ -13,6 +13,29 @@ func cat(parts ...[]byte) []byte {
 	return bytes.Join(parts, nil)
 }
 
+// body returns just the part of a rendered receipt between the two dividers,
+// so the golden tests below assert on what the sender wrote rather than on the
+// frame around it.
+func body(t *testing.T, out []byte) []byte {
+	t.Helper()
+
+	mark := []byte(divider() + "\n")
+
+	start := bytes.Index(out, mark)
+	if start < 0 {
+		t.Fatalf("no opening divider in %q", out)
+	}
+	start += len(mark)
+
+	end := bytes.LastIndex(out, mark)
+	if end <= start {
+		t.Fatalf("no closing divider in %q", out)
+	}
+
+	// writeFooter emits a newline before the closing divider.
+	return bytes.TrimSuffix(out[:end], []byte("\n"))[start:]
+}
+
 func text(s string) []byte { return []byte(s) }
 
 func bold(start, end int) doc.Span {
@@ -28,36 +51,36 @@ func TestRender(t *testing.T) {
 		{
 			name: "plain text",
 			in:   doc.Document{Text: "hi"},
-			want: cat(reset, text("hi"), feed(tailFeed)),
+			want: text("hi"),
 		},
 		{
 			name: "newlines pass straight through",
 			in:   doc.Document{Text: "one\ntwo"},
-			want: cat(reset, text("one\ntwo"), feed(tailFeed)),
+			want: text("one\ntwo"),
 		},
 		{
 			name: "bold span toggles on and off",
 			in:   doc.Document{Text: "hi", Spans: []doc.Span{bold(0, 1)}},
-			want: cat(reset, boldOn, text("h"), boldOff, text("i"), feed(tailFeed)),
+			want: cat(boldOn, text("h"), boldOff, text("i")),
 		},
 		{
 			name: "bold running to the end is closed before the feed",
 			in:   doc.Document{Text: "hi", Spans: []doc.Span{bold(0, 2)}},
-			want: cat(reset, boldOn, text("hi"), boldOff, feed(tailFeed)),
+			want: cat(boldOn, text("hi"), boldOff),
 		},
 		{
 			name: "underline",
 			in: doc.Document{Text: "ab", Spans: []doc.Span{
 				{Start: 1, End: 2, Style: doc.Style{Underline: true}},
 			}},
-			want: cat(reset, text("a"), underlineOn, text("b"), underlineOff, feed(tailFeed)),
+			want: cat(text("a"), underlineOn, text("b"), underlineOff),
 		},
 		{
 			name: "bold and underline together emit both",
 			in: doc.Document{Text: "x", Spans: []doc.Span{
 				{Start: 0, End: 1, Style: doc.Style{Bold: true, Underline: true}},
 			}},
-			want: cat(reset, boldOn, underlineOn, text("x"), boldOff, underlineOff, feed(tailFeed)),
+			want: cat(boldOn, underlineOn, text("x"), boldOff, underlineOff),
 		},
 		{
 			// The case that breaks a boundary-walking implementation: it would
@@ -65,29 +88,28 @@ func TestRender(t *testing.T) {
 			// though the second still wants it on.
 			name: "overlapping spans do not switch off at the join",
 			in:   doc.Document{Text: "abcdef", Spans: []doc.Span{bold(0, 3), bold(2, 5)}},
-			want: cat(reset, boldOn, text("abcde"), boldOff, text("f"), feed(tailFeed)),
+			want: cat(boldOn, text("abcde"), boldOff, text("f")),
 		},
 		{
 			name: "span order does not matter",
 			in:   doc.Document{Text: "abcdef", Spans: []doc.Span{bold(4, 6), bold(0, 2)}},
-			want: cat(reset, boldOn, text("ab"), boldOff, text("cd"),
-				boldOn, text("ef"), boldOff, feed(tailFeed)),
+			want: cat(boldOn, text("ab"), boldOff, text("cd"), boldOn, text("ef"), boldOff),
 		},
 		{
 			name: "adjacent spans do not emit a redundant toggle",
 			in:   doc.Document{Text: "abcd", Spans: []doc.Span{bold(0, 2), bold(2, 4)}},
-			want: cat(reset, boldOn, text("abcd"), boldOff, feed(tailFeed)),
+			want: cat(boldOn, text("abcd"), boldOff),
 		},
 		{
 			name: "a span covering nothing changes nothing",
 			in:   doc.Document{Text: "ab", Spans: nil},
-			want: cat(reset, text("ab"), feed(tailFeed)),
+			want: text("ab"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Render(tt.in)
+			got := body(t, Render(tt.in))
 			if !bytes.Equal(got, tt.want) {
 				t.Errorf("\ngot  %q\nwant %q", got, tt.want)
 			}
@@ -136,12 +158,12 @@ func TestRenderIsDeterministic(t *testing.T) {
 // Whatever the document, the printed characters must survive unaltered --
 // commands are added around the text, never in place of it.
 func TestTextSurvivesUnaltered(t *testing.T) {
-	const body = "Order #1234\nTotal: $9.99\n** thanks **"
+	const message = "Order #1234\nTotal: $9.99\n** thanks **"
 
-	got := Render(doc.Document{Text: body, Spans: []doc.Span{bold(0, 5)}})
+	got := Render(doc.Document{Text: message, Spans: []doc.Span{bold(0, 5)}})
 
-	if stripped := stripCommands(got); !bytes.Equal(stripped, []byte(body)) {
-		t.Errorf("text was altered:\ngot  %q\nwant %q", stripped, body)
+	if stripped := stripCommands(body(t, got)); !bytes.Equal(stripped, []byte(message)) {
+		t.Errorf("text was altered:\ngot  %q\nwant %q", stripped, message)
 	}
 }
 
@@ -177,5 +199,59 @@ func TestStripCommands(t *testing.T) {
 
 	if got := stripCommands(in); string(got) != "abc" {
 		t.Errorf("stripCommands = %q, want \"abc\"", got)
+	}
+}
+
+// The frame is ours rather than the sender's, so it is asserted separately
+// from the golden body tests above.
+func TestFrame(t *testing.T) {
+	out := Render(doc.Document{Text: "hi"})
+
+	t.Run("title is centred and doubled, then size is restored", func(t *testing.T) {
+		want := cat(alignCentre, sizeDouble, text(title+"\n"), sizeNormal)
+		if !bytes.Contains(out, want) {
+			t.Errorf("missing %q", want)
+		}
+	})
+
+	t.Run("every header and footer line appears", func(t *testing.T) {
+		for _, line := range append(append([]string{}, header...), footer...) {
+			if !bytes.Contains(out, []byte(line+"\n")) {
+				t.Errorf("missing line %q", line)
+			}
+		}
+	})
+
+	// If the body inherited the header's centring, every message would come
+	// out centred -- which is us editing what the sender wrote.
+	t.Run("body is left aligned", func(t *testing.T) {
+		bodyAt := bytes.Index(out, []byte("hi"))
+		leftAt := bytes.LastIndex(out[:bodyAt], alignLeft)
+		centreAt := bytes.LastIndex(out[:bodyAt], alignCentre)
+
+		if leftAt < centreAt {
+			t.Error("body is still centred from the header")
+		}
+	})
+
+	t.Run("ends left aligned so the next job starts clean", func(t *testing.T) {
+		tail := out[bytes.LastIndex(out, []byte(divider())):]
+		if !bytes.Contains(tail, alignLeft) {
+			t.Error("alignment not reset after the footer")
+		}
+	})
+}
+
+// Overflowing lines wrap on the printer and look like a mistake, and nobody
+// checks by eye after editing a string.
+func TestFrameFitsThePaper(t *testing.T) {
+	if len(title)*2 > cols {
+		t.Errorf("title %q is %d columns at double width, over %d", title, len(title)*2, cols)
+	}
+
+	for _, line := range append(append([]string{}, header...), footer...) {
+		if len(line) > cols {
+			t.Errorf("%q is %d columns, over %d", line, len(line), cols)
+		}
 	}
 }
