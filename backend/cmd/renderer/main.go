@@ -9,7 +9,7 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
 // maxRunes has to match the gateway's limit. The renderer repeats the check
@@ -26,9 +27,15 @@ const maxRunes = 255
 
 func main() {
 	addr := flag.String("addr", ":8081", "listen address")
+	logFormat := flag.String("log-format", "json", "log format: json or text")
+	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
 	flag.Parse()
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	log, err := logging.New(*logFormat, *logLevel)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	a := &api{
 		limits: doc.Limits{MaxRunes: maxRunes},

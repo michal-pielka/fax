@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
 // upstreamTimeout bounds a call to the renderer or the dispatcher, and has to
@@ -29,9 +30,15 @@ func main() {
 	rendererURL := flag.String("renderer", "http://localhost:8081", "renderer service base URL")
 	dispatcherURL := flag.String("dispatcher", "http://localhost:8082", "dispatcher service base URL")
 	maxRunes := flag.Int("max-runes", 255, "longest document accepted; must match the renderer")
+	logFormat := flag.String("log-format", "json", "log format: json or text")
+	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
 	flag.Parse()
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	log, err := logging.New(*logFormat, *logLevel)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	// One client, shared: it pools connections, and both upstreams sit on the
 	// same host over a link that is never the slow part.

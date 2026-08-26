@@ -147,7 +147,9 @@ func (d *Device) onConnectionLost(_ mqtt.Client, err error) {
 func (d *Device) onState(_ mqtt.Client, m mqtt.Message) {
 	var s State
 	if err := json.Unmarshal(m.Payload(), &s); err != nil {
-		d.log.Error("bad state payload", "payload", string(m.Payload()), "err", err)
+		// Truncated: this is whatever the device sent, and it should not be
+		// able to decide how much of your log it occupies.
+		d.log.Error("bad state payload", "payload", truncate(string(m.Payload()), 120), "err", err)
 		return
 	}
 
@@ -202,4 +204,12 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+
+	return s[:n] + "..."
 }

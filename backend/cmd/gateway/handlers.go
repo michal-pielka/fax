@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -41,7 +43,7 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields() // a typo'd field is a 400, not silent data loss
 
 	if err := dec.Decode(&d); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
+		a.fail(w, r, http.StatusBadRequest, "malformed JSON: "+err.Error())
 		return
 	}
 
@@ -49,12 +51,12 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	// keeps the public error messages under this service's control.
 	if err := d.Validate(a.limits); err != nil {
 		if errors.Is(err, doc.ErrInvalid) {
-			writeError(w, http.StatusBadRequest, err.Error())
+			a.fail(w, r, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		a.log.Error("validate", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		a.fail(w, r, http.StatusInternalServerError, "internal error")
 
 		return
 	}
@@ -62,7 +64,7 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	// Render before touching the dispatcher.
 	payload, err := a.renderer.Render(r.Context(), d)
 	if err != nil {
-		a.upstreamFailed(w, "renderer", err)
+		a.upstreamFailed(w, r, "renderer", err)
 		return
 	}
 
@@ -72,11 +74,11 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	id := uuid.NewString()
 
 	if err := a.dispatcher.Print(r.Context(), id, payload); err != nil {
-		a.upstreamFailed(w, "dispatcher", err)
+		a.upstreamFailed(w, r, "dispatcher", err)
 		return
 	}
 
-	a.log.Info("print accepted", "id", id, "chars", len(d.Text), "bytes", len(payload))
+	a.log.Info("print accepted", "id", id, "ip", clientIP(r), "chars", len(d.Text), "bytes", len(payload))
 
 	// "published" rather than "printed": the broker has the job, but the
 	// firmware cannot yet confirm that paper moved. This becomes "printed"
@@ -87,7 +89,7 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 func (a *api) state(w http.ResponseWriter, r *http.Request) {
 	st, err := a.dispatcher.State(r.Context())
 	if err != nil {
-		a.upstreamFailed(w, "dispatcher", err)
+		a.upstreamFailed(w, r, "dispatcher", err)
 		return
 	}
 
@@ -115,15 +117,16 @@ var passThrough = map[int]bool{
 	http.StatusGatewayTimeout:     true,
 }
 
-func (a *api) upstreamFailed(w http.ResponseWriter, service string, err error) {
+func (a *api) upstreamFailed(w http.ResponseWriter, r *http.Request, service string, err error) {
 	var ue *upstreamError
 	if errors.As(err, &ue) && passThrough[ue.Status] {
-		writeError(w, ue.Status, ue.Msg)
+		a.fail(w, r, ue.Status, ue.Msg)
 		return
 	}
 
+	// The underlying error only appears here; fail() records the response.
 	a.log.Error("upstream failed", "service", service, "err", err)
-	writeError(w, http.StatusBadGateway, service+" is unavailable")
+	a.fail(w, r, http.StatusBadGateway, service+" is unavailable")
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -132,6 +135,51 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, code int, msg string) {
+// fail writes an error response and records it.
+//
+// Rejections used to be silent, which left the two questions you actually have
+// about a public endpoint unanswerable: what are people sending that gets
+// turned away, and how often is the printer unreachable.
+//
+// 4xx is the caller's fault and routine, so it warns; 5xx is ours and errors.
+func (a *api) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {
+	level := slog.LevelWarn
+	if code >= http.StatusInternalServerError {
+		level = slog.LevelError
+	}
+
+	a.log.Log(r.Context(), level, "rejected",
+		"status", code,
+		"reason", msg,
+		"ip", clientIP(r),
+		"path", r.URL.Path,
+	)
+
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// clientIP is the address the request actually came from.
+//
+// Caddy sits in front, so RemoteAddr is always Caddy. Caddy *appends* to
+// X-Forwarded-For rather than replacing it, which means a caller can prepend
+// whatever they like -- a client sending "X-Forwarded-For: 1.2.3.4" arrives
+// here as "1.2.3.4, <their real address>".
+//
+// So the last entry is the trustworthy one, and the widespread habit of taking
+// the first is how spoofed addresses end up in logs and rate limiters.
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		if i := strings.LastIndexByte(fwd, ','); i >= 0 {
+			return strings.TrimSpace(fwd[i+1:])
+		}
+
+		return strings.TrimSpace(fwd)
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+
+	return host
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -180,6 +181,46 @@ func TestUpstreamStatusMapping(t *testing.T) {
 	}
 }
 
+// Rejections were previously silent, which is the whole reason fail() exists.
+func TestRejectionsAreLogged(t *testing.T) {
+	var buf bytes.Buffer
+
+	a := newAPI(&fakeRenderer{}, &fakeDispatcher{})
+	a.log = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/print", strings.NewReader(`{"text":"Kraków"}`))
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	a.routes().ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	for _, want := range []string{`"msg":"rejected"`, `"status":400`, `"ip":"203.0.113.9"`, "unsupported character"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %s\ngot: %s", want, out)
+		}
+	}
+}
+
+// Caddy appends to X-Forwarded-For rather than replacing it, so a caller can
+// prepend anything. Trusting the first entry is how spoofed addresses get into
+// logs; the last one is the address Caddy actually saw.
+func TestClientIPIgnoresSpoofedPrefix(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.9")
+
+	if got := clientIP(r); got != "203.0.113.9" {
+		t.Errorf("clientIP = %q, want the last entry 203.0.113.9", got)
+	}
+}
+
+func TestClientIPFallsBackToRemoteAddr(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "198.51.100.7:54321"
+
+	if got := clientIP(r); got != "198.51.100.7" {
+		t.Errorf("clientIP = %q, want 198.51.100.7", got)
+	}
+}
+
 func TestState(t *testing.T) {
 	d := &fakeDispatcher{state: State{Online: true, Paper: false}}
 
@@ -239,7 +280,7 @@ func TestBodyTooLargeIsRejected(t *testing.T) {
 // status has to survive the trip, or the mapping above is meaningless.
 func TestClientPreservesUpstreamStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, http.StatusConflict, "printer is out of paper")
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "printer is out of paper"})
 	}))
 	defer srv.Close()
 

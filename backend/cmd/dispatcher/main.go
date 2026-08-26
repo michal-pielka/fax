@@ -9,12 +9,14 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
 const connectTimeout = 15 * time.Second
@@ -26,9 +28,15 @@ func main() {
 	clientID := flag.String("client-id", "fax-dispatcher", "MQTT client id")
 	username := flag.String("username", "backend", "MQTT username")
 	device := flag.String("device", "printer-1", "device id, used to build topic names")
+	logFormat := flag.String("log-format", "json", "log format: json or text")
+	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
 	flag.Parse()
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	log, err := logging.New(*logFormat, *logLevel)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	// The password comes from the environment, not a flag: flags are visible
 	// in ps output and shell history to every user on the box.
