@@ -1,0 +1,17 @@
+# Project-local rust-analyzer config.
+#
+# NOTE: this alone is not enough. rust-analyzer also needs a prebuilt std for
+# xtensa-esp32-espidf in the toolchain -- see the espup note in the README.
+# Without it there is no sysroot, so core/std do not resolve and nothing in
+# this crate can be typed.
+
+[cargo]
+target = "xtensa-esp32-espidf"
+
+# esp-idf-sys generates its bindings in a build script; without this there are
+# no types under esp_idf_svc::sys.
+buildScripts = { enable = true }
+
+# Keeps analysis from fighting `cargo build` over the same lock, which shows up
+# as the editor freezing after every save.
+targetDir = true
