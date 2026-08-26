@@ -15,6 +15,13 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Docker's default json-file driver never rotates. Every line any of these
+    # services has ever logged stays on disk until the disk is full, and a full
+    # disk takes the whole stack down -- including Caddy, so the site goes with
+    # it. 30 MB per service is months of history here and cannot run away.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     ports:
       # The only ports open to the internet. 80 exists so Caddy can answer
       # the ACME challenge and redirect; everything real is on 443.
@@ -33,6 +40,9 @@ services:
       context: ./backend
       dockerfile: cmd/gateway/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     command:
       - "-addr=:8080"
       - "-renderer=http://renderer:8081"
@@ -44,12 +54,18 @@ services:
       context: ./backend
       dockerfile: cmd/renderer/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   dispatcher:
     build:
       context: ./backend
       dockerfile: cmd/dispatcher/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     command:
       - "-addr=:8082"
       - "-broker=tcp://mosquitto:1883"
@@ -66,6 +82,9 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     # No published ports, deliberately. Both listeners are reachable only
     # from inside this network: 1883 for the dispatcher, 9001 for Caddy.
     # The broker has no door of its own onto the internet.
