@@ -1,14 +1,10 @@
-# Homelab: plain HTTP on 8080. The tailnet already encrypts everything between
-# your laptop and this host, so there is nothing for TLS to add here -- and a
-# certificate for a 100.x address is not something Let's Encrypt will issue.
-#
-# On the VPS this becomes `fax.pielka.sh { ... }` and Caddy handles TLS itself.
-:8080 {
+fax.pielka.sh {
 	encode gzip
 
-	# /api goes to the gateway. Serving the site and the API from one origin
-	# means the browser treats fetch('/api/print') as same-origin, so there is
-	# no CORS configuration to get wrong.
+	handle /mqtt* {
+		reverse_proxy mosquitto:9001
+	}
+
 	handle /api/* {
 		reverse_proxy gateway:8080
 	}

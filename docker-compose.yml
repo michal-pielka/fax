@@ -1,11 +1,13 @@
-# Homelab stack. Two things are reachable from the tailnet:
+# One door into the whole stack: Caddy on 80/443.
 #
-#   caddy:8080      the site, and /api behind it
-#   mosquitto:1883  where the ESP32 -- or your laptop pretending to be it -- connects
+#   /        the site
+#   /api/*   the gateway
+#   /mqtt    the broker, over websockets
 #
-# The gateway, renderer and dispatcher have no published ports at all. They talk
-# to each other over the internal compose network and nothing else can reach
-# them, which is what makes the /internal/* paths safe to leave unauthenticated.
+# Nothing else publishes a port. The gateway, renderer, dispatcher and
+# mosquitto talk over the internal compose network and are unreachable from
+# outside -- which is what makes the /internal/* paths safe to leave
+# unauthenticated, and what keeps TLS entirely Caddy's problem.
 
 name: fax
 
@@ -14,10 +16,12 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      # BIND_ADDR should be this host's tailnet address (100.x.y.z), so the
-      # site is reachable over the tailnet and nowhere else. 0.0.0.0 exposes
-      # it to your whole LAN.
-      - "${BIND_ADDR:-0.0.0.0}:8080:8080"
+      # The only ports open to the internet. 80 exists so Caddy can answer
+      # the ACME challenge and redirect; everything real is on 443.
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: "fax.pielka.sh"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./web:/srv/web:ro
@@ -62,19 +66,9 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
-    ports:
-      # Bound separately from the site, and NOT to the tailnet address.
-      #
-      # The ESP32 cannot join a tailnet -- it is a plain LAN device -- so a
-      # 100.x bind would put the broker somewhere the printer can never
-      # reach. This has to listen where the ESP32 lives.
-      #
-      # 0.0.0.0 means the whole LAN can see port 1883. That is acceptable
-      # because the broker requires credentials and enforces an ACL, and it
-      # stops mattering once the broker moves to the VPS and the ESP32
-      # connects out over TLS. Set MQTT_BIND_ADDR to this host's LAN address
-      # to narrow it to one interface.
-      - "${MQTT_BIND_ADDR:-0.0.0.0}:1883:1883"
+    # No published ports, deliberately. Both listeners are reachable only
+    # from inside this network: 1883 for the dispatcher, 9001 for Caddy.
+    # The broker has no door of its own onto the internet.
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./deploy/mosquitto/acl:/mosquitto/config/acl:ro
