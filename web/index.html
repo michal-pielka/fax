@@ -3,34 +3,39 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Thermal Press</title>
+<title>FAX</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
 <div class="roll" id="roll">
-  <div class="paper" id="paper">
+  <div class="paper">
+    <!-- Must match the frame in backend/internal/render/render.go. The point
+         of the preview is that it looks like what comes out. -->
     <div class="zone fixed">
-      <div class="big">MICHAL&nbsp;P</div>
-      <div>ul. Przykladowa 12</div>
-      <div>Krakow</div>
+      <div class="big">FAX</div>
+      <div>THE SLOWEST SOCIAL NETWORK</div>
     </div>
     <div class="divider" id="divTop"></div>
 
-    <div class="zone body" id="body" contenteditable="true" spellcheck="false"
-         aria-label="Receipt body"><div class="ln"><br></div></div>
+    <div class="zone body" id="body" contenteditable="true"
+         spellcheck="false" autocorrect="off" autocapitalize="off"
+         aria-label="Your message"></div>
 
     <div class="divider" id="divBot"></div>
     <div class="zone fixed">
-      <div>*** THANK YOU ***</div>
-      <div>fax.pielka.sh</div>
+      <div>COMMITTED TO PHYSICAL MEDIA</div>
+      <div>*** fax.pielka.sh ***</div>
     </div>
   </div>
 </div>
 
-<div class="hint">select lines to format &nbsp;·&nbsp; ⌘⏎ to print</div>
+<div class="bar">
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <button id="print" class="print">Print</button>
+</div>
 
-<div class="pop" id="tools" role="toolbar" aria-label="Line formatting"></div>
+<div class="pop" id="tools" role="toolbar" aria-label="Formatting"></div>
 
 <script src="app.js"></script>
 </body>

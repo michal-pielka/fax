@@ -3,10 +3,19 @@
   const COLS = parseInt(getComputedStyle(document.documentElement)
     .getPropertyValue('--cols'), 10);
   const $ = (id) => document.getElementById(id);
-  const body = $('body'), roll = $('roll'), tools = $('tools');
+  const body = $('body'), roll = $('roll'), tools = $('tools'), status = $('status');
 
   $('divTop').textContent = '-'.repeat(COLS);
   $('divBot').textContent = '-'.repeat(COLS);
+
+  /* Only what the printer can actually do. ESC/POS has no strikethrough at
+     all, and the server's document model carries bold and underline and
+     nothing else -- so alignment, sizes and inverse would look right here and
+     silently vanish on paper. */
+  const TOOLS = [
+    { key: 'bold',  label: 'B', title: 'Bold',      attr: 'bold' },
+    { key: 'under', label: 'U', title: 'Underline', attr: 'under' },
+  ];
 
   const lineOf = (node) => {
     let n = node;
@@ -83,26 +92,7 @@
     }
   }
 
-  /* Styles are per line, because the printer is: ESC a is a line-level
-     command and a receipt is a stack of lines, not a flowing paragraph. */
-  const TOOLS = [
-    { key: 'bold',   label: 'B',  title: 'Bold',            attr: 'bold',  on: '1' },
-    { key: 'under',  label: 'U',  title: 'Underline',       attr: 'under', on: '1' },
-    { key: 'under2', label: 'U²', title: 'Underline 2 dot', attr: 'under', on: '2' },
-    { key: 'strike', label: 'S',  title: 'Strikethrough',   attr: 'strike',on: '1' },
-    { key: 'inv',    label: '◧',  title: 'Inverse',         attr: 'inv',   on: '1' },
-    { sep: true },
-    { key: 'w2',     label: '2W', title: 'Double width',    attr: 'w', on: '2' },
-    { key: 'h2',     label: '2H', title: 'Double height',   attr: 'h', on: '2' },
-    { key: 'h3',     label: '3H', title: 'Triple height',   attr: 'h', on: '3' },
-    { sep: true },
-    { key: 'left',   label: '⇤',  title: 'Left',   attr: 'align', on: 'left' },
-    { key: 'center', label: '↔',  title: 'Centre', attr: 'align', on: 'center' },
-    { key: 'right',  label: '⇥',  title: 'Right',  attr: 'align', on: 'right' },
-  ];
-
   TOOLS.forEach(t => {
-    if (t.sep) { const s = document.createElement('span'); s.className = 'sep'; tools.append(s); return; }
     const b = document.createElement('button');
     b.textContent = t.label; b.title = t.title; b.dataset.key = t.key;
     b.addEventListener('mousedown', e => e.preventDefault());
@@ -115,15 +105,15 @@
   function applyTool(t) {
     const lines = saved.length ? saved : selectedLines();
     if (!lines.length) return;
-    const allOn = lines.every(l => l.dataset[t.attr] === t.on);
-    lines.forEach(l => { if (allOn) delete l.dataset[t.attr]; else l.dataset[t.attr] = t.on; });
+    const allOn = lines.every(l => l.dataset[t.attr] === '1');
+    lines.forEach(l => { if (allOn) delete l.dataset[t.attr]; else l.dataset[t.attr] = '1'; });
     syncTools(lines);
   }
 
   function syncTools(lines) {
     tools.querySelectorAll('button').forEach(b => {
       const t = TOOLS.find(x => x.key === b.dataset.key);
-      b.setAttribute('aria-pressed', String(lines.every(l => l.dataset[t.attr] === t.on)));
+      b.setAttribute('aria-pressed', String(lines.every(l => l.dataset[t.attr] === '1')));
     });
   }
 
@@ -190,11 +180,12 @@
     /* Browsers scroll a clipped box to chase the caret even with
        overflow: hidden, which slides the top of the receipt out of view. */
     body.scrollTop = 0;
+    setStatus('');
   });
 
   body.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
-    if (meta && e.key === 'Enter') { e.preventDefault(); doPrint(); return; }
+    if (meta && e.key === 'Enter') { e.preventDefault(); print(); return; }
     if (meta && e.key.toLowerCase() === 'b') { e.preventDefault(); applyTool(TOOLS[0]); return; }
     if (meta && e.key.toLowerCase() === 'u') { e.preventDefault(); applyTool(TOOLS[1]); return; }
   });
@@ -203,11 +194,71 @@
     if (!tools.contains(e.target) && !body.contains(e.target)) tools.classList.remove('on');
   });
 
-  /* The feed animation is the only confirmation: paper leaves, fresh paper
-     arrives. No toast, nothing left on the page. */
-  function doPrint() {
-    if (roll.classList.contains('out')) return;
+  /* The server wants flat text plus character-range spans, while the editor
+     styles whole lines -- so each styled line becomes one span over its slice
+     of the joined text. */
+  function document_() {
+    const lines = [...body.children].map(l => l.textContent.replace(/ /g, ' '));
+    const spans = [];
+    let at = 0;
+
+    [...body.children].forEach((l, i) => {
+      const style = {};
+      if (l.dataset.bold) style.bold = true;
+      if (l.dataset.under) style.underline = true;
+
+      if (Object.keys(style).length && lines[i].length) {
+        spans.push({ start: at, end: at + lines[i].length, style });
+      }
+      at += lines[i].length + 1; // +1 for the newline that joins them
+    });
+
+    return { text: lines.join('\n'), ...(spans.length && { spans }) };
+  }
+
+  function setStatus(msg, bad) {
+    status.textContent = msg;
+    status.classList.toggle('bad', !!bad);
+  }
+
+  let printing = false;
+
+  async function print() {
+    if (printing || roll.classList.contains('out')) return;
+
+    const doc = document_();
+    if (!doc.text.trim()) { setStatus('nothing to print', true); return; }
+
+    printing = true;
     tools.classList.remove('on');
+    setStatus('sending...');
+
+    try {
+      const res = await fetch('/api/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(doc),
+      });
+
+      if (!res.ok) {
+        /* Deliberately does not clear the editor: with no queue behind it, a
+           failed send means the words only exist in this textarea. */
+        const { error } = await res.json().catch(() => ({}));
+        setStatus(error || `failed (${res.status})`, true);
+        return;
+      }
+
+      setStatus('printed');
+      feed();
+    } catch {
+      setStatus('could not reach the printer', true);
+    } finally {
+      printing = false;
+    }
+  }
+
+  /* The paper leaving and fresh paper arriving is the confirmation. */
+  function feed() {
     roll.classList.add('out');
     setTimeout(() => {
       body.innerHTML = '<div class="ln"><br></div>';
@@ -218,6 +269,8 @@
       caretInto(body.firstElementChild);
     }, 780);
   }
+
+  $('print').addEventListener('click', print);
 
   normalize();
   body.focus();

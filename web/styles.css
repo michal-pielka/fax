@@ -32,12 +32,7 @@
        they are full they are full -- the paper does not grow. */
     --rows: 9;
     --line-height: 1.00;
-    --line-height-big: 1.00;
 
-    /* Enlargement multipliers, matching GS ! n. */
-    --mult-w: 2;
-    --mult-h2: 2;
-    --mult-h3: 3;
     /* How far the receipt floats above the table. Every shadow layer scales
        from this, so one number tunes the whole effect. */
     --lift: 1;
@@ -143,27 +138,7 @@
   .ln { min-height: calc(1em * var(--line-height)); }
   .ln[data-bold="1"] { font-weight: 700; text-shadow: 0.4px 0 0 currentColor; }
   .ln[data-under="1"] { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
-  .ln[data-under="2"] { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
-  .ln[data-strike="1"] { text-decoration: line-through; }
-  .ln[data-under="1"][data-strike="1"],
-  .ln[data-under="2"][data-strike="1"] { text-decoration: underline line-through; }
-  .ln[data-inv="1"] { background: var(--ink); color: var(--paper); }
-  .ln[data-align="center"] { text-align: center; }
-  .ln[data-align="right"] { text-align: right; }
-  .ln[data-w="2"] {
-    transform: scaleX(var(--mult-w));
-    transform-origin: 0 50%;
-    width: calc(100% / var(--mult-w));
-  }
-  .ln[data-align="center"][data-w="2"] { transform-origin: 50% 50%; margin: 0 auto; }
-  .ln[data-align="right"][data-w="2"] {
-    transform-origin: 100% 50%;
-    margin-left: calc(100% - 100% / var(--mult-w));
-  }
-  .ln[data-h="2"] { font-size: calc(var(--font-size) * var(--mult-h2)); line-height: var(--line-height-big); }
-  .ln[data-h="3"] { font-size: calc(var(--font-size) * var(--mult-h3)); line-height: var(--line-height-big); }
 
-  /* Chrome exists only while it is being used. */
   .pop {
     position: absolute; z-index: 50; display: none;
     background: var(--paper);
@@ -190,13 +165,40 @@
   .body:focus, .body:focus-visible { outline: none; }
 
   /* Fades out and never returns; the page is bare after four seconds. */
-  .hint {
-    position: fixed; left: 0; right: 0; bottom: 1.75rem;
-    text-align: center; font-size: 14px; color: var(--ink-ghost);
-    pointer-events: none;
-    animation: dim 900ms 4s forwards;
+  .bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 14px;
   }
-  @keyframes dim { to { opacity: 0; } }
+
+  .print {
+    font: inherit;
+    font-size: 15px;
+    padding: 10px 26px;
+    border: 1px solid var(--ink);
+    border-radius: 999px;
+    background: var(--ink);
+    color: var(--paper);
+    cursor: pointer;
+  }
+
+  .print:hover { opacity: 0.85; }
+  .print:disabled { opacity: 0.4; cursor: default; }
+  .print:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  /* Reserves its line whether or not there is a message, so the button does
+     not jump when one appears. */
+  .status {
+    min-height: 1.2em;
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+
+  .status.bad { color: #a33; }
 
   /* Stepped, not smooth: a stepper motor advances paper in discrete rows. */
   @keyframes feed-out { to { transform: translateY(-118vh); } }
