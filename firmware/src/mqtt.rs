@@ -58,12 +58,22 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
         ..Default::default()
     };
 
-    let (tx, rx) = mpsc::channel();
+    // Bounded on purpose. The main thread spends about half a second per job
+    // clocking bytes out at 9600 baud, so anything arriving faster than that
+    // grows the queue forever -- and the queue is heap on a board with 300 KB
+    // of it. Four is enough to absorb a double-tapped Print button.
+    let (tx, rx) = mpsc::sync_channel(4);
 
     let client = EspMqttClient::new_cb(config::MQTT_URL, &options, move |event| {
         match event.payload() {
+            // try_send throughout, never send: SyncSender::send BLOCKS when the
+            // channel is full, and blocking here blocks the MQTT task -- the
+            // exact deadlock this module is arranged around. It would also
+            // stall the PUBACK, leaving the broker unsure the job ever landed.
             EventPayload::Connected(_) => {
-                let _ = tx.send(Event::Connected);
+                if tx.try_send(Event::Connected).is_err() {
+                    log::error!("channel full, dropped a connect -- not subscribed");
+                }
             }
 
             // Only one topic is subscribed, so anything arriving here is a job.
@@ -73,7 +83,12 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
             // payload cannot exceed roughly 600 bytes. Raise that limit past
             // ~3500 and long receipts will silently arrive in pieces.
             EventPayload::Received { data, .. } => {
-                let _ = tx.send(Event::Job(data.to_vec()));
+                // Dropping is the right answer here: there is no queue in this
+                // design, and a printer that cannot keep up should shed work
+                // rather than exhaust the heap and reboot mid-receipt.
+                if tx.try_send(Event::Job(data.to_vec())).is_err() {
+                    log::warn!("channel full, dropped a job");
+                }
             }
 
             EventPayload::Disconnected => log::warn!("disconnected from broker"),
