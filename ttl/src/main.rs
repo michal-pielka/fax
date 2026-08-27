@@ -11,9 +11,12 @@ mod printer;
 mod time;
 mod wifi;
 
+use std::sync::mpsc::RecvTimeoutError;
+
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::mqtt::client::QoS;
+use esp_idf_svc::hal::uart::UartDriver;
+use esp_idf_svc::mqtt::client::{EspMqttClient, QoS};
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::EspError;
 
@@ -57,26 +60,81 @@ fn main() -> Result<(), EspError> {
 
     let (mut client, events) = mqtt::connect()?;
 
+    // What we last told the broker. True to start, so a printer that never
+    // answers behaves exactly as it did before any of this existed.
+    let mut paper = true;
+
     // All client and printer work happens on this thread. Doing any of it in
     // the MQTT callback deadlocks -- see mqtt.rs.
-    for event in events {
-        match event {
-            Event::Connected => {
+    //
+    // recv_timeout rather than a plain receive: the timeout is the only thing
+    // that runs on an idle device, and it is where the paper poll lives.
+    loop {
+        match events.recv_timeout(config::PAPER_POLL) {
+            Ok(Event::Connected) => {
                 log::info!("connected to broker");
 
                 client.subscribe(config::JOB_TOPIC, QoS::AtLeastOnce)?;
-                client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, config::ONLINE)?;
 
-                log::info!("subscribed, announced online");
+                // Measured before announcing: publishing a guess and correcting
+                // it a moment later is how the gateway ends up rejecting a job
+                // that would have printed fine.
+                paper = printer::has_paper(&uart).unwrap_or_else(|| {
+                    log::warn!("printer will not report paper -- assuming loaded");
+                    true
+                });
+                client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, state(paper))?;
+
+                log::info!("subscribed, announced online, paper {paper}");
             }
 
-            Event::Job(payload) => {
+            Ok(Event::Job(payload)) => {
                 log::info!("printing {} bytes", payload.len());
                 printer::write(&uart, &payload)?;
                 log::info!("printed");
+
+                // Straight after a job is when the roll is likeliest to have
+                // just run out.
+                report_paper(&mut client, &uart, &mut paper)?;
             }
+
+            Err(RecvTimeoutError::Timeout) => report_paper(&mut client, &uart, &mut paper)?,
+
+            // The callback's sender is gone, so the client is gone with it.
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
+
+    Ok(())
+}
+
+fn state(paper: bool) -> &'static [u8] {
+    if paper {
+        config::ONLINE
+    } else {
+        config::NO_PAPER
+    }
+}
+
+/// Ask about the paper and tell the broker, but only when the answer changed.
+/// A retained publish every five seconds is noise the broker keeps forever.
+fn report_paper(
+    client: &mut EspMqttClient<'_>,
+    uart: &UartDriver,
+    known: &mut bool,
+) -> Result<(), EspError> {
+    // Silence is not "no paper" -- see has_paper -- so keep the last answer.
+    let Some(now) = printer::has_paper(uart) else {
+        return Ok(());
+    };
+
+    if now == *known {
+        return Ok(());
+    }
+
+    *known = now;
+    log::info!("paper {}", if now { "loaded" } else { "OUT" });
+    client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, state(now))?;
 
     Ok(())
 }

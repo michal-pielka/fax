@@ -18,10 +18,7 @@ pub fn connect<'d, M: WifiModemPeripheral + 'd>(
     ssid: &str,
     password: &str,
 ) -> Result<BlockingWifi<EspWifi<'d>>, EspError> {
-    let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(modem, sysloop.clone(), Some(nvs))?,
-        sysloop,
-    )?;
+    let mut wifi = BlockingWifi::wrap(EspWifi::new(modem, sysloop.clone(), Some(nvs))?, sysloop)?;
 
     wifi.set_configuration(&Configuration::Client(ClientConfiguration {
         ssid: ssid.try_into().expect("WIFI_SSID longer than 32 bytes"),

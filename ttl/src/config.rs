@@ -8,6 +8,8 @@
 //! The broker address is not among them -- it is fixed infrastructure, not a
 //! secret, so it is a constant below and cannot be flashed wrong.
 
+use std::time::Duration;
+
 pub const WIFI_SSID: &str = env!("WIFI_SSID");
 pub const WIFI_PASS: &str = env!("WIFI_PASS");
 
@@ -30,13 +32,17 @@ pub const CLIENT_ID: &str = "fax-printer-1";
 pub const JOB_TOPIC: &str = "fax/printer-1/job/+";
 pub const STATE_TOPIC: &str = "fax/printer-1/state";
 
-/// Sent retained on connect. `paper` is asserted, not measured -- DTR on
-/// GPIO23 is wired but unread -- and has to claim true, because the gateway
-/// refuses to publish to a printer it believes is empty.
+/// The two states we can publish while connected. `paper` is measured now --
+/// see printer::has_paper -- so the gateway's 409 means what it says.
 pub const ONLINE: &[u8] = br#"{"online":true,"paper":true}"#;
+pub const NO_PAPER: &[u8] = br#"{"online":true,"paper":false}"#;
 
 /// The last will: published by the broker if we vanish without disconnecting.
 pub const OFFLINE: &[u8] = br#"{"online":false,"paper":false}"#;
 
 /// Printed on the printer's self-test page (hold feed, then power on).
 pub const BAUD_RATE: u32 = 9600;
+
+/// How often to ask about the paper when nothing else is happening. It is also
+/// the longest the main loop ever blocks waiting for a job.
+pub const PAPER_POLL: Duration = Duration::from_secs(5);
