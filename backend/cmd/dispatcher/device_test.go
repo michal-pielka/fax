@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestNewTopics(t *testing.T) {
@@ -102,5 +103,89 @@ func TestAckError(t *testing.T) {
 
 	if ackError(ack{Error: "something new"}) == nil {
 		t.Error("an unrecognised reason reported success")
+	}
+}
+
+func TestSubscribeSignalsOnEveryChange(t *testing.T) {
+	d := newWaiting()
+	d.subs = make(map[chan struct{}]struct{})
+
+	changed, unsubscribe := d.Subscribe()
+	defer unsubscribe()
+
+	d.setState(State{Online: true, Paper: true})
+
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("a state change did not signal")
+	}
+
+	// Busy is not part of State and nothing publishes it, so claiming the
+	// printer has to signal too or the lamp would never light.
+	if _, err := d.wait("job"); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("claiming the printer did not signal")
+	}
+
+	d.stopWaiting("job")
+
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("releasing the printer did not signal")
+	}
+}
+
+// A burst has to collapse into one wake-up. The subscriber reads the current
+// state after waking, so replaying every intermediate value would only deliver
+// answers that are already wrong -- and a full channel must never block
+// notify, which runs on paho's single message goroutine.
+func TestNotifyCoalescesAndNeverBlocks(t *testing.T) {
+	d := newWaiting()
+	d.subs = make(map[chan struct{}]struct{})
+
+	changed, unsubscribe := d.Subscribe()
+	defer unsubscribe()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		for range 100 {
+			d.setState(State{Online: true})
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("notify blocked on a subscriber that never read")
+	}
+
+	if len(changed) != 1 {
+		t.Errorf("%d signals queued, want 1", len(changed))
+	}
+}
+
+func TestUnsubscribeStopsSignals(t *testing.T) {
+	d := newWaiting()
+	d.subs = make(map[chan struct{}]struct{})
+
+	_, unsubscribe := d.Subscribe()
+	unsubscribe()
+
+	d.subMu.Lock()
+	n := len(d.subs)
+	d.subMu.Unlock()
+
+	if n != 0 {
+		t.Errorf("%d subscribers left after unsubscribe", n)
 	}
 }

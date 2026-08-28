@@ -12,6 +12,7 @@ package sse
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,7 +40,11 @@ func Start(w http.ResponseWriter) (*Writer, error) {
 	h.Set("X-Accel-Buffering", "no")
 
 	rc := http.NewResponseController(w)
-	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+
+	// ErrNotSupported is tolerated rather than fatal: a writer without a
+	// deadline to clear has no deadline to die of either, which is what a test
+	// recorder and some middleware look like. Any other failure is real.
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		return nil, fmt.Errorf("clear write deadline: %w", err)
 	}
 

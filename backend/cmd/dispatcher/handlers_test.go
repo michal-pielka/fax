@@ -34,6 +34,10 @@ func (f *fakePrinter) Publish(_ context.Context, id string, payload []byte) erro
 func (f *fakePrinter) State() State { return f.state }
 func (f *fakePrinter) Busy() bool   { return f.busy }
 
+func (f *fakePrinter) Subscribe() (<-chan struct{}, func()) {
+	return make(chan struct{}), func() {}
+}
+
 func newAPI(p Printer) *api {
 	return &api{printer: p, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }

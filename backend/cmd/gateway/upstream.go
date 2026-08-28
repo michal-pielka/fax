@@ -20,6 +20,8 @@ type Renderer interface {
 type Dispatcher interface {
 	Print(ctx context.Context, id string, payload []byte) error
 	State(ctx context.Context) (State, error)
+	// Events opens the dispatcher's state stream. The caller closes it.
+	Events(ctx context.Context) (io.ReadCloser, error)
 }
 
 // These three shapes must match what the renderer and dispatcher declare in
@@ -128,10 +130,41 @@ func (c *rendererClient) Render(ctx context.Context, d doc.Document) ([]byte, er
 	return out.Payload, nil
 }
 
-type dispatcherClient struct{ jsonClient }
+type dispatcherClient struct {
+	jsonClient
+	// A second client, with no timeout at all. http.Client.Timeout covers
+	// reading the response body, and the whole point of a stream is that the
+	// body never ends -- the request context is what closes it instead.
+	stream *http.Client
+}
 
 func NewDispatcherClient(base string, hc *http.Client) Dispatcher {
-	return &dispatcherClient{jsonClient{name: "dispatcher", base: base, http: hc}}
+	return &dispatcherClient{
+		jsonClient: jsonClient{name: "dispatcher", base: base, http: hc},
+		stream:     &http.Client{},
+	}
+}
+
+func (c *dispatcherClient) Events(ctx context.Context) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/internal/events", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.stream.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+
+		return nil, &upstreamError{Service: c.name, Status: resp.StatusCode}
+	}
+
+	return resp.Body, nil
 }
 
 func (c *dispatcherClient) Print(ctx context.Context, id string, payload []byte) error {

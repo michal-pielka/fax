@@ -7,10 +7,12 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/sse"
 )
 
 // maxBody caps the request body before the JSON decoder sees it. Validate
@@ -21,6 +23,7 @@ const maxBody = 64 << 10 // 64 KiB
 type api struct {
 	renderer   Renderer
 	dispatcher Dispatcher
+	hub        *hub
 	limits     doc.Limits
 	log        *slog.Logger
 }
@@ -30,6 +33,7 @@ func (a *api) routes() *http.ServeMux {
 
 	mux.HandleFunc("POST /api/print", a.print)
 	mux.HandleFunc("GET /api/state", a.state)
+	mux.HandleFunc("GET /api/events", a.events)
 	mux.HandleFunc("GET /api/health", a.health)
 
 	return mux
@@ -93,6 +97,62 @@ func (a *api) state(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, st)
+}
+
+// eventHeartbeat is how often a silent stream sends a comment, so that phone
+// radios and NAT tables do not reap a connection for being quiet.
+const eventHeartbeat = 20 * time.Second
+
+// events streams the printer's state to a browser for as long as the tab is
+// open.
+//
+// The chain behind it never polls: the firmware publishes a change, the
+// dispatcher notices in its MQTT callback, the gateway is already holding a
+// stream open to hear about it, and this pushes it out. A lamp changes because
+// something happened, not because a timer went off.
+func (a *api) events(w http.ResponseWriter, r *http.Request) {
+	changes, current, unsubscribe, ok := a.hub.subscribe()
+	if !ok {
+		a.fail(w, r, http.StatusServiceUnavailable, "too many open streams")
+		return
+	}
+	defer unsubscribe()
+
+	stream, err := sse.Start(w)
+	if err != nil {
+		a.log.Error("cannot start event stream", "err", err, "ip", clientIP(r))
+		return
+	}
+
+	// Send at once, so the page never opens with the lamps dark waiting for
+	// something to change.
+	if err := stream.Send(current); err != nil {
+		return
+	}
+
+	ping := time.NewTicker(eventHeartbeat)
+	defer ping.Stop()
+
+	for {
+		var err error
+
+		select {
+		case <-r.Context().Done():
+			return
+
+		case s := <-changes:
+			err = stream.Send(s)
+
+		case <-ping.C:
+			err = stream.Ping()
+		}
+
+		// A write that fails means the tab is gone. Nothing to log and nobody
+		// left to tell.
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (a *api) health(w http.ResponseWriter, _ *http.Request) {

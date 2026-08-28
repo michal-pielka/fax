@@ -32,6 +32,7 @@ func (f *fakeRenderer) Render(_ context.Context, d doc.Document) ([]byte, error)
 type fakeDispatcher struct {
 	err     error
 	state   State
+	events  string
 	calls   int
 	gotID   string
 	gotPayl []byte
@@ -49,12 +50,25 @@ func (f *fakeDispatcher) State(context.Context) (State, error) {
 	return f.state, f.err
 }
 
+// events is the stream the hub follows. The handler tests never open it, so
+// this only has to satisfy the interface.
+func (f *fakeDispatcher) Events(context.Context) (io.ReadCloser, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return io.NopCloser(strings.NewReader(f.events)), nil
+}
+
 func newAPI(r Renderer, d Dispatcher) *api {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
 	return &api{
 		renderer:   r,
 		dispatcher: d,
+		hub:        newHub(d, log),
 		limits:     doc.Limits{MaxRunes: 255},
-		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		log:        log,
 	}
 }
 

@@ -50,9 +50,12 @@ func main() {
 
 	// A client each, because the timeouts differ. Both still pool their own
 	// connections, and the link between containers is never the slow part.
+	dispatcher := NewDispatcherClient(*dispatcherURL, &http.Client{Timeout: printTimeout})
+
 	a := &api{
 		renderer:   NewRendererClient(*rendererURL, &http.Client{Timeout: renderTimeout}),
-		dispatcher: NewDispatcherClient(*dispatcherURL, &http.Client{Timeout: printTimeout}),
+		dispatcher: dispatcher,
+		hub:        newHub(dispatcher, log),
 		limits:     doc.Limits{MaxRunes: *maxRunes},
 		log:        log,
 	}
@@ -75,6 +78,11 @@ func main() {
 	// requests finish.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// One connection to the dispatcher, held for the life of the process and
+	// reconnected when it drops. Started before the listener so the first
+	// browser to arrive already has something to be told.
+	go a.hub.run(ctx)
 
 	go func() {
 		log.Info("listening", "addr", srv.Addr, "renderer", *rendererURL, "dispatcher", *dispatcherURL)

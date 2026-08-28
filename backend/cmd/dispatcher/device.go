@@ -44,6 +44,7 @@ type Printer interface {
 	Publish(ctx context.Context, id string, payload []byte) error
 	State() State
 	Busy() bool
+	Subscribe() (<-chan struct{}, func())
 }
 
 // Device owns the MQTT connection and everything known about the printer.
@@ -67,6 +68,9 @@ type Device struct {
 	// every request.
 	waitMu  sync.Mutex
 	waiting map[string]chan ack
+
+	subMu sync.Mutex
+	subs  map[chan struct{}]struct{}
 }
 
 // ack is what the firmware says about one job. The reason is a code rather
@@ -120,6 +124,7 @@ func NewDevice(cfg Config, log *slog.Logger) *Device {
 		topics:  newTopics(cfg.Device),
 		log:     log,
 		waiting: make(map[string]chan ack),
+		subs:    make(map[chan struct{}]struct{}),
 	}
 
 	opts := mqtt.NewClientOptions().
@@ -202,6 +207,46 @@ func (d *Device) onState(_ mqtt.Client, m mqtt.Message) {
 	d.setState(s)
 }
 
+// Subscribe returns a channel that fires whenever anything observable about
+// the printer changes, plus the function that stops it.
+//
+// It signals *that* something changed rather than what. Subscribers then read
+// State and Busy themselves, which keeps notify out of both mutexes -- they
+// are taken in different orders on different paths, so a notify that built a
+// snapshot would be a deadlock waiting to happen.
+func (d *Device) Subscribe() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+
+	d.subMu.Lock()
+	d.subs[ch] = struct{}{}
+	d.subMu.Unlock()
+
+	return ch, func() {
+		d.subMu.Lock()
+		delete(d.subs, ch)
+		d.subMu.Unlock()
+	}
+}
+
+// notify wakes every subscriber.
+//
+// Nothing here may block: this is reached from onState, which paho runs on the
+// one goroutine it uses for every inbound message. Capacity one plus a
+// non-blocking send also means a burst of changes coalesces into a single
+// wake-up, and the subscriber reads the final state rather than replaying
+// three intermediate ones that are already wrong.
+func (d *Device) notify() {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+
+	for ch := range d.subs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // onAck matches a reply to the request waiting for it.
 //
 // Nothing in here may block. paho's Order option defaults to true, so every
@@ -241,8 +286,10 @@ func (d *Device) onAck(_ mqtt.Client, m mqtt.Message) {
 
 func (d *Device) setState(s State) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.state = s
+	d.mu.Unlock()
+
+	d.notify()
 }
 
 func (d *Device) State() State {
@@ -329,23 +376,30 @@ func ackError(a ack) error {
 // the first, and this design has no queue to put it in.
 func (d *Device) wait(id string) (<-chan ack, error) {
 	d.waitMu.Lock()
-	defer d.waitMu.Unlock()
 
 	if len(d.waiting) > 0 {
+		d.waitMu.Unlock()
 		return nil, ErrBusy
 	}
 
 	// Buffered, so onAck never blocks on a waiter that has already timed out.
 	ch := make(chan ack, 1)
 	d.waiting[id] = ch
+	d.waitMu.Unlock()
+
+	// After the unlock, not before: notify takes subMu, and keeping the two
+	// locks from ever overlapping is what makes the ordering unarguable.
+	d.notify()
 
 	return ch, nil
 }
 
 func (d *Device) stopWaiting(id string) {
 	d.waitMu.Lock()
-	defer d.waitMu.Unlock()
 	delete(d.waiting, id)
+	d.waitMu.Unlock()
+
+	d.notify()
 }
 
 // Busy reports whether a job is on the printer right now. It is what feeds the
