@@ -141,13 +141,55 @@
     overflow-wrap: anywhere;
     font-variant-ligatures: none;
     caret-color: var(--ink);
+    /* Explicit for iOS, which will not offer the paste callout on a
+       contenteditable it thinks is unselectable. */
+    -webkit-user-select: text;
+    user-select: text;
+    /* Anchors the hint, which is positioned rather than laid out. */
+    position: relative;
   }
+  /* The hint has to match an empty line as the browser actually leaves it --
+     <div class="ln"><br></div> -- and a <br> child means the line is not
+     :empty. Matching only :empty is why this never once appeared. */
+  .body:empty::before,
   .body:has(> .ln:only-child:empty)::before,
-  .body:empty::before {
-    content: 'start typing…';
-    color: var(--ink-ghost);
+  .body:has(> .ln:only-child > br:only-child)::before {
+    content: 'start typing';
+    /* Positioned, not laid out. In flow these pseudo-elements sit either side
+       of the line div and each takes a row of its own, which pushes the caret
+       down the page. Overlaying the first line leaves the caret where the
+       reader is about to type. */
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: rgb(var(--shade) / 0.32);
     pointer-events: none;
   }
+
+  /* The dots animate by revealing one character at a time. A width step
+     rather than swapping `content`, because content is not reliably
+     animatable -- and steps(), like everything else here, because a smooth
+     fade would look like a web app instead of a machine waiting. */
+  .body:empty::after,
+  .body:has(> .ln:only-child:empty)::after,
+  .body:has(> .ln:only-child > br:only-child)::after {
+    content: '...';
+    position: absolute;
+    top: 0;
+    /* Exactly the width of "start typing", which is 12 characters -- and 1ch
+       is one character, because the font is monospace. */
+    left: 12ch;
+    width: 3ch;
+    overflow: hidden;
+    white-space: pre;
+    color: rgb(var(--shade) / 0.32);
+    pointer-events: none;
+    animation: hint-dots 1.6s steps(4, jump-none) infinite;
+  }
+
+  /* jump-none gives 0ch, 1ch, 2ch, 3ch -- both endpoints included, which is
+     what makes it land on all three dots rather than stopping at two. */
+  @keyframes hint-dots { from { width: 0; } }
 
   .ln { min-height: calc(1em * var(--line-height)); }
   .ln[data-bold="1"] { font-weight: 700; text-shadow: 0.4px 0 0 currentColor; }
@@ -263,4 +305,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+    /* The blanket rule above would cycle the dots a thousand times a second.
+       Show them, still. */
+    .body::after { animation: none !important; width: 3ch !important; }
   }

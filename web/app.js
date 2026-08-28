@@ -189,6 +189,58 @@
     setStatus('');
   });
 
+  /* Paste needs its own handler for two reasons.
+
+     contenteditable inserts whatever markup the clipboard holds, and this
+     editor keeps styling per line rather than inline -- so pasted HTML both
+     survives into the DOM and means nothing to the document model.
+
+     And the rollback above is all-or-nothing: anything longer than the paper
+     is thrown away entirely, which on a phone is most pastes and reads as
+     "paste is broken". Trimming to what fits is what people expect. */
+  body.addEventListener('paste', (e) => {
+    e.preventDefault();
+
+    const text = (e.clipboardData || window.clipboardData)?.getData('text/plain') || '';
+    if (!text) return;
+
+    const before = { html: body.innerHTML, caret: caretMark() };
+
+    /* Put back the starting state and insert the first `n` characters,
+       reporting whether the result still fits on the paper.
+
+       execCommand is deprecated everywhere and still the only reliable way to
+       drop plain text at the caret with the undo stack intact. */
+    const fits = (n) => {
+      body.innerHTML = before.html;
+      if (before.caret) caretRestore(before.caret);
+      else caretInto(body.lastElementChild, true);
+
+      if (n) document.execCommand('insertText', false, text.slice(0, n));
+      normalize();
+
+      return !atCapacity();
+    };
+
+    if (!fits(text.length)) {
+      /* Largest prefix that still fits. About a dozen rebuilds of a nine-row
+         div, once, on a paste -- cheaper than it looks. */
+      let lo = 0, hi = text.length;
+
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (fits(mid)) lo = mid; else hi = mid - 1;
+      }
+
+      fits(lo);
+      setStatus('trimmed to fit the paper');
+    } else {
+      setStatus('');
+    }
+
+    body.scrollTop = 0;
+  });
+
   body.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
     if (meta && e.key === 'Enter') { e.preventDefault(); print(); return; }
