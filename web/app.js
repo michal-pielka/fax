@@ -229,6 +229,11 @@
 
   let printing = false;
 
+  /* The id of the job we are waiting to hear about, from the 202. Printing is
+     fire-and-forget now: the request only says the job was accepted, and how
+     it ended arrives on the event stream tagged with this. */
+  let pending = null;
+
   async function print() {
     if (printing || !ready || roll.classList.contains('out')) return;
 
@@ -248,19 +253,37 @@
 
       if (!res.ok) {
         /* Deliberately does not clear the editor: with no queue behind it, a
-           failed send means the words only exist in this textarea. */
+           failed send means the words only exist in this textarea. Everything
+           knowable up front still fails here -- offline, out of paper, busy. */
         const { error } = await res.json().catch(() => ({}));
         setStatus(error || `failed (${res.status})`, true);
         return;
       }
 
-      setStatus('printed');
-      feed();
+      const { id } = await res.json();
+      pending = id;
+      setStatus('printing...');
     } catch {
       setStatus('could not reach the printer', true);
     } finally {
       printing = false;
     }
+  }
+
+  /* Called for every state event. The job we are waiting on has finished when
+     the last result carries its id. */
+  function settle(last) {
+    if (!pending || !last || last.id !== pending) return;
+
+    pending = null;
+
+    if (last.ok) {
+      setStatus('printed');
+      feed();
+      return;
+    }
+
+    setStatus(last.error || 'did not print', true);
   }
 
   /* The paper leaving and fresh paper arriving is the confirmation. */
@@ -306,11 +329,16 @@
 
   const events = new EventSource('/api/events');
   events.onmessage = (e) => {
+    let state;
+
     try {
-      setLamps(JSON.parse(e.data));
+      state = JSON.parse(e.data);
     } catch {
-      /* One bad event is not worth breaking the page over. */
+      return; /* One bad event is not worth breaking the page over. */
     }
+
+    setLamps(state);
+    settle(state.last);
   };
 
   /* Dark rather than stale: if the stream is down we do not know anything,

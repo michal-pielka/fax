@@ -72,14 +72,11 @@ func main() {
 		Handler:           a.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Must exceed ackTimeout. A print handler waits for the paper to stop
-		// moving before it writes anything, and WriteTimeout covers the whole
-		// response -- so a shorter one here would cut off the very answer the
-		// acknowledgement exists to deliver.
-		//
-		// The event stream is unaffected either way: sse.Start clears the
-		// deadline on that response.
-		WriteTimeout: 40 * time.Second,
+		// Ordinary again. Waiting for the acknowledgement moved off the
+		// request and into a goroutine, so no handler here outlives a publish.
+		// The event stream is exempt regardless: sse.Start clears the deadline
+		// on that response.
+		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 

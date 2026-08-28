@@ -89,8 +89,8 @@ func TestPrintHappyPath(t *testing.T) {
 
 	rec := do(t, newAPI(r, d), http.MethodPost, "/api/print", validBody)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body %s", rec.Code, rec.Body)
 	}
 
 	var out map[string]string
@@ -172,7 +172,6 @@ func TestUpstreamStatusMapping(t *testing.T) {
 	}{
 		{"out of paper passes through", http.StatusConflict, http.StatusConflict},
 		{"offline passes through", http.StatusServiceUnavailable, http.StatusServiceUnavailable},
-		{"no ack passes through", http.StatusGatewayTimeout, http.StatusGatewayTimeout},
 		{"rejected document passes through", http.StatusBadRequest, http.StatusBadRequest},
 		// A broken dispatcher is not the caller's fault, and says nothing
 		// about the printer.

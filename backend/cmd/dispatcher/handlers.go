@@ -70,9 +70,10 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case err == nil:
-		// "printed", and it means it: Publish only returns nil once the
-		// firmware has confirmed that paper moved.
-		writeJSON(w, http.StatusOK, map[string]string{"id": req.ID, "status": "printed"})
+		// 202, not 200: the broker has the job and the printer is claimed, but
+		// the paper has not moved yet. How it ends arrives on the event
+		// stream, tagged with this id.
+		writeJSON(w, http.StatusAccepted, map[string]string{"id": req.ID, "status": "accepted"})
 
 	case errors.Is(err, ErrNoPaper), errors.Is(err, ErrBusy):
 		// Both describe the printer's current condition rather than a fault,
@@ -82,11 +83,6 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrOffline):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 
-	case errors.Is(err, ErrNoAck):
-		// Not a failure we can be certain about: the receipt may be sitting in
-		// the printer right now. 504 says exactly that much and no more.
-		writeError(w, http.StatusGatewayTimeout, err.Error())
-
 	default:
 		// Reaching the broker is the dispatcher's job, so failing to is the
 		// dispatcher's fault, not a statement about the printer.
@@ -95,12 +91,17 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// stateResponse is State plus whether a job is on the printer right now.
-// Busy is not part of State because nothing publishes it -- it is derived from
-// the dispatcher's own in-flight job, not from anything the device says.
+// stateResponse is State plus the two things the device does not publish:
+// whether a job is on the printer right now, and how the last one ended. Both
+// are the dispatcher's own knowledge, not anything the firmware says about
+// itself.
+//
+// Last is what makes a fire-and-forget print honest. Busy going false says a
+// job ended; only this says which one, and whether it worked.
 type stateResponse struct {
 	State
-	Busy bool `json:"busy"`
+	Busy bool    `json:"busy"`
+	Last *Result `json:"last,omitempty"`
 }
 
 func (a *api) state(w http.ResponseWriter, _ *http.Request) {
@@ -111,7 +112,13 @@ func (a *api) state(w http.ResponseWriter, _ *http.Request) {
 // under a single lock: the two are guarded separately, and a reader that took
 // both would have to agree on an order with everything else that takes either.
 func (a *api) snapshot() stateResponse {
-	return stateResponse{State: a.printer.State(), Busy: a.printer.Busy()}
+	s := stateResponse{State: a.printer.State(), Busy: a.printer.Busy()}
+
+	if last, ok := a.printer.LastJob(); ok {
+		s.Last = &last
+	}
+
+	return s
 }
 
 // eventHeartbeat is how often a silent stream sends a comment, so an idle

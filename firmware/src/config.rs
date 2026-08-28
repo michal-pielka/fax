@@ -64,11 +64,8 @@ pub const PAPER_POLL: Duration = Duration::from_secs(5);
 /// under a second of engine time -- and is sized for images, where a raster
 /// block is orders of magnitude more data at the same 9600 baud.
 ///
-/// Every layer above gives up later than the one below, so a failure surfaces
-/// as the specific error rather than a generic timeout:
-///
-///   this                      30s
-///   dispatcher's ackTimeout   32s
-///   gateway's printTimeout    35s
-///   gateway's WriteTimeout    40s
+/// The dispatcher's ackTimeout is two seconds longer, so a printer that gives
+/// up gets to say why rather than leaving the server to guess. Nothing above
+/// that waits at all any more: printing is fire-and-forget over HTTP, and the
+/// outcome reaches the browser on the event stream.
 pub const PRINT_TIMEOUT: Duration = Duration::from_secs(30);

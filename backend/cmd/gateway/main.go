@@ -21,16 +21,15 @@ import (
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
-// The two upstreams have nothing in common, so they do not share a timeout.
-// Rendering is CPU work measured in milliseconds. Printing is a physical act
-// that ends when paper stops moving, which for a raster image at 9600 baud is
-// tens of seconds. One shared value would either cut long prints short or let
-// a hung renderer hold a connection open for just as long.
+// Both upstreams are quick now: rendering is CPU work, and printing returns
+// once the broker has the job rather than once the paper stops moving. Waiting
+// for the printer happens in the dispatcher, off the request entirely.
 //
-// Both have to leave room under the server's WriteTimeout below.
+// Separate constants anyway, because they are separate concerns and the next
+// person to make one of them slow should not silently move the other.
 const (
 	renderTimeout = 5 * time.Second
-	printTimeout  = 35 * time.Second
+	printTimeout  = 5 * time.Second
 )
 
 func main() {
@@ -67,10 +66,10 @@ func main() {
 		// hold a connection open indefinitely.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Must exceed printTimeout. WriteTimeout covers everything from the
-		// end of the request headers to the last byte of the response, and a
-		// print request holds that open for as long as the paper moves.
-		WriteTimeout: 40 * time.Second,
+		// The event stream is exempt: sse.Start clears the deadline on that
+		// response, which it has to, since WriteTimeout covers a whole
+		// response and a stream is one that never ends.
+		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 

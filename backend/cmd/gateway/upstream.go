@@ -40,10 +40,21 @@ type printRequest struct {
 
 // State mirrors the dispatcher's. The zero value is offline, with no paper and
 // nothing printing, so a decode that yields nothing reports the safe answer.
+//
+// Last is how the most recent job ended. It rides along because a print is
+// fire-and-forget now: the 202 says the job was accepted, and this is the only
+// thing that ever says whether it came out.
 type State struct {
-	Online bool `json:"online"`
-	Paper  bool `json:"paper"`
-	Busy   bool `json:"busy"`
+	Online bool    `json:"online"`
+	Paper  bool    `json:"paper"`
+	Busy   bool    `json:"busy"`
+	Last   *Result `json:"last,omitempty"`
+}
+
+type Result struct {
+	ID    string `json:"id"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
 
 // upstreamError keeps the status an internal service replied with. Some of

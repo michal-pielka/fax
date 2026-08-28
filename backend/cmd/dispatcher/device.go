@@ -19,9 +19,6 @@ var (
 	ErrOffline = errors.New("printer is offline")
 	ErrNoPaper = errors.New("printer is out of paper")
 	ErrBusy    = errors.New("printer is busy")
-	// ErrNoAck is deliberately ambiguous, because the situation is: the job
-	// may have printed perfectly and only the acknowledgement went missing.
-	ErrNoAck = errors.New("printer did not confirm the job")
 )
 
 // ackTimeout bounds the wait for the firmware to report a job finished. It has
@@ -44,6 +41,7 @@ type Printer interface {
 	Publish(ctx context.Context, id string, payload []byte) error
 	State() State
 	Busy() bool
+	LastJob() (Result, bool)
 	Subscribe() (<-chan struct{}, func())
 }
 
@@ -59,6 +57,9 @@ type Device struct {
 
 	mu    sync.RWMutex
 	state State
+	// last is how the most recent job ended, nil until one has. Guarded by mu
+	// because it is read in the same breath as state.
+	last *Result
 
 	// One in-flight job at a time, keyed by id. The printer is a single
 	// physical thing, so a second job would interleave with the first --
@@ -74,10 +75,21 @@ type Device struct {
 }
 
 // ack is what the firmware says about one job. The reason is a code rather
-// than a sentence so this switches on it instead of matching strings.
+// than a sentence so callers switch on it instead of matching strings.
 type ack struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error"`
+}
+
+// reasonNoConfirmation is the firmware's code for a printer that never came
+// back, and is also what this records when the firmware itself says nothing.
+const reasonNoConfirmation = "no_confirmation"
+
+// Result is how one job ended, as it reaches the browser.
+type Result struct {
+	ID    string `json:"id"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
 
 // topics groups the two the dispatcher cares about. They are derived from the
@@ -299,11 +311,13 @@ func (d *Device) State() State {
 	return d.state
 }
 
-// Publish sends one job to the printer and waits for it to come back out.
+// Publish sends one job to the printer.
 //
-// It returns nil only once the firmware has confirmed that paper moved, so a
-// nil here means printed, not published. Everything else is an error the
-// caller can act on: no paper, no printer, already busy, or no answer.
+// It returns as soon as the broker has the job, not when the paper stops
+// moving. Everything knowable up front is still an error here -- no printer,
+// no paper, already printing -- and how the job actually ended arrives later
+// as a state event, because holding an HTTP request open for thirty seconds
+// is a fragile way to deliver one bit that is already being broadcast.
 func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	st := d.State()
 
@@ -321,7 +335,6 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	defer d.stopWaiting(id)
 
 	topic := d.topics.job + "/" + id
 
@@ -333,42 +346,65 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	select {
 	case <-tok.Done():
 		if err := tok.Error(); err != nil {
+			d.stopWaiting(id)
+
 			return fmt.Errorf("publish to %s: %w", topic, err)
 		}
 
-		d.log.Info("published", "id", id, "bytes", len(payload))
-
 	case <-ctx.Done():
+		d.stopWaiting(id)
+
 		return ctx.Err()
 	}
 
-	// The broker has it. Now find out whether the printer did anything with
-	// it -- which is the only part the person waiting actually cares about.
+	d.log.Info("published", "id", id, "bytes", len(payload))
+
+	// Deliberately not tied to ctx: the paper is moving now and will keep
+	// moving whether or not anyone is still on the other end of the request.
+	// Abandoning this would leave the printer claimed forever.
+	go d.awaitAck(id, acks)
+
+	return nil
+}
+
+// awaitAck records how a job ended and frees the printer for the next one.
+//
+// setResult does not notify on its own, so the deferred stopWaiting is what
+// publishes both changes -- the result, and the printer going idle -- as one
+// event rather than two, the first of which would be half true.
+func (d *Device) awaitAck(id string, acks <-chan ack) {
+	defer d.stopWaiting(id)
+
 	select {
 	case a := <-acks:
-		return ackError(a)
+		d.setResult(Result{ID: id, OK: a.OK, Error: a.Error})
 
 	case <-time.After(ackTimeout):
-		return ErrNoAck
-
-	case <-ctx.Done():
-		return ctx.Err()
+		// The receipt may well be in the printer right now. All that is
+		// certain is that nobody said so.
+		d.log.Warn("no acknowledgement", "id", id)
+		d.setResult(Result{ID: id, Error: reasonNoConfirmation})
 	}
 }
 
-// ackError turns the firmware's reason code into an error the handlers already
-// know how to render.
-func ackError(a ack) error {
-	switch {
-	case a.OK:
-		return nil
-	case a.Error == "no_paper":
-		return ErrNoPaper
-	case a.Error == "no_confirmation":
-		return ErrNoAck
-	default:
-		return fmt.Errorf("printer refused the job: %s", a.Error)
+func (d *Device) setResult(r Result) {
+	d.mu.Lock()
+	d.last = &r
+	d.mu.Unlock()
+}
+
+// LastJob reports how the most recent job ended, and whether there has been
+// one. A single slot is enough: only one job runs at a time, so the last
+// result is the only one anybody can still be asking about.
+func (d *Device) LastJob() (Result, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	if d.last == nil {
+		return Result{}, false
 	}
+
+	return *d.last, true
 }
 
 // wait claims the printer for one job. There is only ever one slot, because

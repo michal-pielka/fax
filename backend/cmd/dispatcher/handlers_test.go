@@ -21,6 +21,7 @@ type fakePrinter struct {
 	gotID string
 	gotPL []byte
 	busy  bool
+	last  *Result
 }
 
 func (f *fakePrinter) Publish(_ context.Context, id string, payload []byte) error {
@@ -33,6 +34,14 @@ func (f *fakePrinter) Publish(_ context.Context, id string, payload []byte) erro
 
 func (f *fakePrinter) State() State { return f.state }
 func (f *fakePrinter) Busy() bool   { return f.busy }
+
+func (f *fakePrinter) LastJob() (Result, bool) {
+	if f.last == nil {
+		return Result{}, false
+	}
+
+	return *f.last, true
+}
 
 func (f *fakePrinter) Subscribe() (<-chan struct{}, func()) {
 	return make(chan struct{}), func() {}
@@ -60,8 +69,8 @@ func TestPrintPublishes(t *testing.T) {
 
 	rec := do(t, p, http.MethodPost, "/internal/print", printBody)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body %s", rec.Code, rec.Body)
 	}
 
 	if p.calls != 1 {
@@ -81,10 +90,11 @@ func TestPrintPublishes(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// "printed", and it has to be earned: Publish returns nil only after the
-	// firmware confirms the paper moved.
-	if out["status"] != "printed" {
-		t.Errorf("status = %q, want printed", out["status"])
+	// "accepted", never "printed": at this point the broker has the job and
+	// the printer is claimed, and nothing has touched paper. The outcome
+	// arrives later, on the event stream, tagged with this id.
+	if out["status"] != "accepted" {
+		t.Errorf("status = %q, want accepted", out["status"])
 	}
 }
 
@@ -97,9 +107,6 @@ func TestPrintErrorMapping(t *testing.T) {
 		{"out of paper is a conflict", ErrNoPaper, http.StatusConflict},
 		{"busy is a conflict", ErrBusy, http.StatusConflict},
 		{"offline is unavailable", ErrOffline, http.StatusServiceUnavailable},
-		// Not 502 and not 200: the job may be printing right now, and the
-		// status has to leave room for that.
-		{"no acknowledgement is a timeout", ErrNoAck, http.StatusGatewayTimeout},
 		// Not a statement about the printer -- the dispatcher failed at its
 		// one job, so it must not be reported as a printer condition.
 		{"broker failure is unavailable", errors.New("connection refused"), http.StatusServiceUnavailable},

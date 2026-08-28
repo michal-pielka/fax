@@ -84,9 +84,10 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 
 	a.log.Info("print accepted", "id", id, "ip", clientIP(r), "chars", len(d.Text), "bytes", len(payload))
 
-	// "printed" is now literal. Print only returns nil once the firmware has
-	// said the paper moved, so this request lasted as long as the receipt did.
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "printed"})
+	// 202: the printer has been claimed and the job is on its way, which is
+	// everything that can honestly be said this early. Whether it came out
+	// arrives on /api/events tagged with this id -- keep it.
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": id, "status": "accepted"})
 }
 
 func (a *api) state(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +166,6 @@ func (a *api) health(w http.ResponseWriter, _ *http.Request) {
 //	400 the renderer rejected the document
 //	409 out of paper, or already printing something else
 //	503 printer offline, or the broker is unreachable
-//	504 sent, but never acknowledged
 //
 // Anything else means that service is itself broken, which is a 502: the
 // caller did nothing wrong, and the same request may well work later.
@@ -173,7 +173,6 @@ var passThrough = map[int]bool{
 	http.StatusBadRequest:         true,
 	http.StatusConflict:           true,
 	http.StatusServiceUnavailable: true,
-	http.StatusGatewayTimeout:     true,
 }
 
 func (a *api) upstreamFailed(w http.ResponseWriter, r *http.Request, service string, err error) {

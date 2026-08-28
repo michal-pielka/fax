@@ -79,30 +79,32 @@ func TestOnlyOneJobAtATime(t *testing.T) {
 	}
 }
 
-// A reason code the dispatcher does not recognise must still be an error.
-// Reporting success because the firmware said something unexpected is the one
-// outcome the whole acknowledgement exists to prevent.
-func TestAckError(t *testing.T) {
-	tests := []struct {
-		name string
-		a    ack
-		want error
-	}{
-		{"printed", ack{OK: true}, nil},
-		{"out of paper", ack{Error: "no_paper"}, ErrNoPaper},
-		{"never confirmed", ack{Error: "no_confirmation"}, ErrNoAck},
+// The outcome of a job is no longer an error on a request -- it is recorded
+// and broadcast, because the request returned long before the paper moved.
+func TestLastJobRecordsTheOutcome(t *testing.T) {
+	d := newWaiting()
+
+	if _, ok := d.LastJob(); ok {
+		t.Error("a fresh Device claims to have finished a job")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ackError(tt.a); !errors.Is(got, tt.want) {
-				t.Fatalf("ackError(%+v) = %v, want %v", tt.a, got, tt.want)
-			}
-		})
+	d.setResult(Result{ID: "abc", OK: true})
+
+	got, ok := d.LastJob()
+	if !ok {
+		t.Fatal("LastJob reports nothing after a result")
 	}
 
-	if ackError(ack{Error: "something new"}) == nil {
-		t.Error("an unrecognised reason reported success")
+	if got.ID != "abc" || !got.OK {
+		t.Errorf("LastJob = %+v", got)
+	}
+
+	// One slot, overwritten. Only one job runs at a time, so the last result
+	// is the only one anybody can still be asking about.
+	d.setResult(Result{ID: "def", Error: reasonNoConfirmation})
+
+	if got, _ := d.LastJob(); got.ID != "def" || got.OK {
+		t.Errorf("LastJob = %+v after a second job", got)
 	}
 }
 
