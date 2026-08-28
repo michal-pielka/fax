@@ -20,6 +20,7 @@ type fakePrinter struct {
 	calls int
 	gotID string
 	gotPL []byte
+	busy  bool
 }
 
 func (f *fakePrinter) Publish(_ context.Context, id string, payload []byte) error {
@@ -31,6 +32,7 @@ func (f *fakePrinter) Publish(_ context.Context, id string, payload []byte) erro
 }
 
 func (f *fakePrinter) State() State { return f.state }
+func (f *fakePrinter) Busy() bool   { return f.busy }
 
 func newAPI(p Printer) *api {
 	return &api{printer: p, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -75,10 +77,10 @@ func TestPrintPublishes(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// "published" rather than "printed": the firmware cannot confirm paper
-	// moved, and the response should not imply that it did.
-	if out["status"] != "published" {
-		t.Errorf("status = %q, want published", out["status"])
+	// "printed", and it has to be earned: Publish returns nil only after the
+	// firmware confirms the paper moved.
+	if out["status"] != "printed" {
+		t.Errorf("status = %q, want printed", out["status"])
 	}
 }
 
@@ -89,7 +91,11 @@ func TestPrintErrorMapping(t *testing.T) {
 		want int
 	}{
 		{"out of paper is a conflict", ErrNoPaper, http.StatusConflict},
+		{"busy is a conflict", ErrBusy, http.StatusConflict},
 		{"offline is unavailable", ErrOffline, http.StatusServiceUnavailable},
+		// Not 502 and not 200: the job may be printing right now, and the
+		// status has to leave room for that.
+		{"no acknowledgement is a timeout", ErrNoAck, http.StatusGatewayTimeout},
 		// Not a statement about the printer -- the dispatcher failed at its
 		// one job, so it must not be reported as a printer condition.
 		{"broker failure is unavailable", errors.New("connection refused"), http.StatusServiceUnavailable},

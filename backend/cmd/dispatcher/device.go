@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,7 +18,16 @@ import (
 var (
 	ErrOffline = errors.New("printer is offline")
 	ErrNoPaper = errors.New("printer is out of paper")
+	ErrBusy    = errors.New("printer is busy")
+	// ErrNoAck is deliberately ambiguous, because the situation is: the job
+	// may have printed perfectly and only the acknowledgement went missing.
+	ErrNoAck = errors.New("printer did not confirm the job")
 )
+
+// ackTimeout bounds the wait for the firmware to report a job finished. It has
+// to exceed the firmware's own PRINT_TIMEOUT, so that a printer which gives up
+// gets to say why instead of leaving us guessing.
+const ackTimeout = 32 * time.Second
 
 // State is what the device last told us about itself.
 //
@@ -33,6 +43,7 @@ type State struct {
 type Printer interface {
 	Publish(ctx context.Context, id string, payload []byte) error
 	State() State
+	Busy() bool
 }
 
 // Device owns the MQTT connection and everything known about the printer.
@@ -47,6 +58,22 @@ type Device struct {
 
 	mu    sync.RWMutex
 	state State
+
+	// One in-flight job at a time, keyed by id. The printer is a single
+	// physical thing, so a second job would interleave with the first --
+	// which is why a busy printer refuses work rather than queueing it.
+	//
+	// Its own mutex, not mu: this is touched on every ack, and mu is read on
+	// every request.
+	waitMu  sync.Mutex
+	waiting map[string]chan ack
+}
+
+// ack is what the firmware says about one job. The reason is a code rather
+// than a sentence so this switches on it instead of matching strings.
+type ack struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error"`
 }
 
 // topics groups the two the dispatcher cares about. They are derived from the
@@ -62,12 +89,18 @@ type topics struct {
 	// state is retained and carries the device's last will, so subscribing
 	// yields the current state immediately even after a dispatcher restart.
 	state string
+	// ack is a prefix, mirroring job: the firmware replies on
+	// fax/<device>/ack/<id> once the paper has actually moved. Never
+	// retained -- a retained ack would be redelivered on every reconnect,
+	// long after the request that cared about it had gone.
+	ack string
 }
 
 func newTopics(device string) topics {
 	return topics{
 		job:   fmt.Sprintf("fax/%s/job", device),
 		state: fmt.Sprintf("fax/%s/state", device),
+		ack:   fmt.Sprintf("fax/%s/ack", device),
 	}
 }
 
@@ -83,7 +116,11 @@ type Config struct {
 }
 
 func NewDevice(cfg Config, log *slog.Logger) *Device {
-	d := &Device{topics: newTopics(cfg.Device), log: log}
+	d := &Device{
+		topics:  newTopics(cfg.Device),
+		log:     log,
+		waiting: make(map[string]chan ack),
+	}
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
@@ -130,9 +167,17 @@ func (d *Device) onConnect(c mqtt.Client) {
 
 	// QoS 1: losing a state change would leave the dispatcher lying about the
 	// printer indefinitely, since the next one may be hours away.
-	tok := c.Subscribe(d.topics.state, 1, d.onState)
-	if tok.Wait() && tok.Error() != nil {
-		d.log.Error("subscribe failed", "topic", d.topics.state, "err", tok.Error())
+	//
+	// Blocking here is safe. paho calls this handler on its own goroutine
+	// (`go c.options.OnConnect(c)`), unlike the message handlers below.
+	for topic, handler := range map[string]mqtt.MessageHandler{
+		d.topics.state:      d.onState,
+		d.topics.ack + "/+": d.onAck,
+	} {
+		tok := c.Subscribe(topic, 1, handler)
+		if tok.Wait() && tok.Error() != nil {
+			d.log.Error("subscribe failed", "topic", topic, "err", tok.Error())
+		}
 	}
 }
 
@@ -157,6 +202,43 @@ func (d *Device) onState(_ mqtt.Client, m mqtt.Message) {
 	d.setState(s)
 }
 
+// onAck matches a reply to the request waiting for it.
+//
+// Nothing in here may block. paho's Order option defaults to true, so every
+// message handler runs in turn on one shared goroutine, and the PUBACK is only
+// sent once this returns -- a stall here freezes the whole connection.
+func (d *Device) onAck(_ mqtt.Client, m mqtt.Message) {
+	// The id is the last segment of fax/<device>/ack/<id>.
+	parts := strings.Split(m.Topic(), "/")
+	id := parts[len(parts)-1]
+
+	var a ack
+	if err := json.Unmarshal(m.Payload(), &a); err != nil {
+		d.log.Error("bad ack payload", "id", id, "payload", truncate(string(m.Payload()), 120), "err", err)
+		return
+	}
+
+	d.log.Info("device ack", "id", id, "ok", a.OK, "reason", a.Error)
+
+	d.waitMu.Lock()
+	ch, ok := d.waiting[id]
+	d.waitMu.Unlock()
+
+	if !ok {
+		// The request gave up, or this is a duplicate delivery of an ack we
+		// already handled. Either way there is nobody left to tell.
+		d.log.Warn("ack for an unknown job", "id", id)
+		return
+	}
+
+	// Buffered, and drained by exactly one waiter, so this cannot block --
+	// but the select is what guarantees it even if that stops being true.
+	select {
+	case ch <- a:
+	default:
+	}
+}
+
 func (d *Device) setState(s State) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -170,11 +252,11 @@ func (d *Device) State() State {
 	return d.state
 }
 
-// Publish sends one job to the printer.
+// Publish sends one job to the printer and waits for it to come back out.
 //
-// It reports only that the broker accepted the message, not that anything was
-// printed: the firmware does not acknowledge jobs yet. Once it does, this is
-// where waiting for that acknowledgement belongs.
+// It returns nil only once the firmware has confirmed that paper moved, so a
+// nil here means printed, not published. Everything else is an error the
+// caller can act on: no paper, no printer, already busy, or no answer.
 func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	st := d.State()
 
@@ -184,6 +266,15 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	case !st.Paper:
 		return ErrNoPaper
 	}
+
+	// Registered before the publish, not after: the printer can answer in
+	// milliseconds, and an ack that arrives before its waiter exists is an ack
+	// nobody hears.
+	acks, err := d.wait(id)
+	if err != nil {
+		return err
+	}
+	defer d.stopWaiting(id)
 
 	topic := d.topics.job + "/" + id
 
@@ -200,10 +291,71 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 
 		d.log.Info("published", "id", id, "bytes", len(payload))
 
-		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+
+	// The broker has it. Now find out whether the printer did anything with
+	// it -- which is the only part the person waiting actually cares about.
+	select {
+	case a := <-acks:
+		return ackError(a)
+
+	case <-time.After(ackTimeout):
+		return ErrNoAck
+
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// ackError turns the firmware's reason code into an error the handlers already
+// know how to render.
+func ackError(a ack) error {
+	switch {
+	case a.OK:
+		return nil
+	case a.Error == "no_paper":
+		return ErrNoPaper
+	case a.Error == "no_confirmation":
+		return ErrNoAck
+	default:
+		return fmt.Errorf("printer refused the job: %s", a.Error)
+	}
+}
+
+// wait claims the printer for one job. There is only ever one slot, because
+// there is only ever one printer: a second job would interleave its bytes with
+// the first, and this design has no queue to put it in.
+func (d *Device) wait(id string) (<-chan ack, error) {
+	d.waitMu.Lock()
+	defer d.waitMu.Unlock()
+
+	if len(d.waiting) > 0 {
+		return nil, ErrBusy
+	}
+
+	// Buffered, so onAck never blocks on a waiter that has already timed out.
+	ch := make(chan ack, 1)
+	d.waiting[id] = ch
+
+	return ch, nil
+}
+
+func (d *Device) stopWaiting(id string) {
+	d.waitMu.Lock()
+	defer d.waitMu.Unlock()
+	delete(d.waiting, id)
+}
+
+// Busy reports whether a job is on the printer right now. It is what feeds the
+// BUSY indicator, and it needs no extra bookkeeping: an unfinished job is
+// exactly an outstanding waiter.
+func (d *Device) Busy() bool {
+	d.waitMu.Lock()
+	defer d.waitMu.Unlock()
+
+	return len(d.waiting) > 0
 }
 
 func truncate(s string, n int) string {

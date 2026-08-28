@@ -8,7 +8,9 @@
 user backend
 topic write fax/+/job/+
 topic read  fax/+/state
+topic read  fax/+/ack/+
 
 user printer
 topic read  fax/+/job/+
 topic write fax/+/state
+topic write fax/+/ack/+

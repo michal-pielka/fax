@@ -66,15 +66,22 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case err == nil:
-		// Deliberately "published", not "printed": the broker has the job.
-		// Whether paper moved is something the firmware cannot yet report.
-		writeJSON(w, http.StatusOK, map[string]string{"id": req.ID, "status": "published"})
+		// "printed", and it means it: Publish only returns nil once the
+		// firmware has confirmed that paper moved.
+		writeJSON(w, http.StatusOK, map[string]string{"id": req.ID, "status": "printed"})
 
-	case errors.Is(err, ErrNoPaper):
+	case errors.Is(err, ErrNoPaper), errors.Is(err, ErrBusy):
+		// Both describe the printer's current condition rather than a fault,
+		// and both become printable again on their own.
 		writeError(w, http.StatusConflict, err.Error())
 
 	case errors.Is(err, ErrOffline):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+
+	case errors.Is(err, ErrNoAck):
+		// Not a failure we can be certain about: the receipt may be sitting in
+		// the printer right now. 504 says exactly that much and no more.
+		writeError(w, http.StatusGatewayTimeout, err.Error())
 
 	default:
 		// Reaching the broker is the dispatcher's job, so failing to is the
@@ -84,8 +91,16 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// stateResponse is State plus whether a job is on the printer right now.
+// Busy is not part of State because nothing publishes it -- it is derived from
+// the dispatcher's own in-flight job, not from anything the device says.
+type stateResponse struct {
+	State
+	Busy bool `json:"busy"`
+}
+
 func (a *api) state(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.printer.State())
+	writeJSON(w, http.StatusOK, stateResponse{State: a.printer.State(), Busy: a.printer.Busy()})
 }
 
 // health reports on the dispatcher, not the printer. An offline printer is a

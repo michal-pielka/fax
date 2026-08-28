@@ -80,10 +80,9 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 
 	a.log.Info("print accepted", "id", id, "ip", clientIP(r), "chars", len(d.Text), "bytes", len(payload))
 
-	// "published" rather than "printed": the broker has the job, but the
-	// firmware cannot yet confirm that paper moved. This becomes "printed"
-	// when the dispatcher waits for a device acknowledgement.
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "published"})
+	// "printed" is now literal. Print only returns nil once the firmware has
+	// said the paper moved, so this request lasted as long as the receipt did.
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "printed"})
 }
 
 func (a *api) state(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +103,7 @@ func (a *api) health(w http.ResponseWriter, _ *http.Request) {
 // deliberately -- they describe the printer or the request, not a fault:
 //
 //	400 the renderer rejected the document
-//	409 out of paper
+//	409 out of paper, or already printing something else
 //	503 printer offline, or the broker is unreachable
 //	504 sent, but never acknowledged
 //

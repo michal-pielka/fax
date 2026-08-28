@@ -22,7 +22,11 @@ pub enum Event {
     /// thread has to resubscribe every time this arrives, not just once.
     Connected,
     /// A finished job: raw ESC/POS, ready for the printer.
-    Job(Vec<u8>),
+    ///
+    /// The id comes from the topic rather than the payload, which is what
+    /// keeps the payload pure ESC/POS with no parser on this end. It travels
+    /// back out on the ack so the dispatcher knows which job finished.
+    Job { id: String, payload: Vec<u8> },
 }
 
 /// Connects to the broker and returns the client plus the event stream.
@@ -82,12 +86,25 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
             // 4KB and the gateway caps documents at 255 characters, so a
             // payload cannot exceed roughly 600 bytes. Raise that limit past
             // ~3500 and long receipts will silently arrive in pieces.
-            EventPayload::Received { data, .. } => {
+            EventPayload::Received { topic, data, .. } => {
+                // The topic is absent on the continuation chunks of a split
+                // payload. That cannot happen at our sizes -- see above -- so
+                // rather than reassemble, say so and drop it.
+                let Some(id) = topic.and_then(|t| t.rsplit('/').next()) else {
+                    log::warn!("job with no topic, dropped");
+                    return;
+                };
+
                 // Dropping is the right answer here: there is no queue in this
                 // design, and a printer that cannot keep up should shed work
                 // rather than exhaust the heap and reboot mid-receipt.
-                if tx.try_send(Event::Job(data.to_vec())).is_err() {
-                    log::warn!("channel full, dropped a job");
+                let job = Event::Job {
+                    id: id.to_string(),
+                    payload: data.to_vec(),
+                };
+
+                if tx.try_send(job).is_err() {
+                    log::warn!("channel full, dropped job {id}");
                 }
             }
 

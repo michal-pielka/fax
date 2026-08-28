@@ -6,6 +6,8 @@
 //! it is a question rather than a document, and only the thing holding the
 //! UART can hear the answer.
 
+use std::time::Duration;
+
 use esp_idf_svc::hal::delay::{TickType, BLOCK};
 use esp_idf_svc::hal::gpio::{AnyIOPin, InputPin, OutputPin};
 use esp_idf_svc::hal::uart::{config::Config as UartConfig, Uart, UartDriver};
@@ -89,4 +91,47 @@ pub fn has_paper(uart: &UartDriver) -> Option<bool> {
     // Bits 5 and 6 are the paper-end sensor: 00 present, 11 gone. Measured on
     // this printer as 0x12 with the roll in, 0x72 with it out.
     Some(status & 0b0110_0000 == 0)
+}
+
+/// Wait for the printer to finish, and learn about the paper on the way.
+///
+/// The trick is that GS r is *not* real-time: the printer executes it in the
+/// order it comes out of the receive buffer, so its reply cannot arrive until
+/// everything queued ahead of it has been printed. Sent straight after a job,
+/// the reply is the completion signal.
+///
+/// That is the whole difference from has_paper, which uses DLE EOT 4 -- a
+/// real-time command that answers immediately and would tell us nothing about
+/// whether the job is done.
+///
+/// `Some(paper)` means the job finished and this is the state of the roll
+/// afterwards. `None` means the printer never came back: out of paper mid-job,
+/// jammed, or not listening.
+pub fn wait_done(uart: &UartDriver, timeout: Duration) -> Option<bool> {
+    write(uart, &[0x1D, 0x72, 0x01]).ok()?;
+
+    let mut buf = [0u8; 1];
+    if uart
+        .read(
+            &mut buf,
+            TickType::new_millis(timeout.as_millis() as u64).ticks(),
+        )
+        .ok()?
+        != 1
+    {
+        return None;
+    }
+
+    let status = buf[0];
+
+    // GS r has no fixed bits to check, so this is the weaker sanity test: only
+    // the low nibble is defined, and the two values this printer produces are
+    // 0x00 with paper and 0x0c without.
+    if status & 0b1111_0000 != 0 {
+        log::warn!("printer answered {status:#04x}, not a paper status");
+        return None;
+    }
+
+    // Bits 2 and 3 are the paper-end sensor.
+    Some(status & 0b0000_1100 == 0)
 }

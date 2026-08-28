@@ -88,17 +88,40 @@ fn main() -> Result<(), EspError> {
                 log::info!("subscribed, announced online, paper {paper}");
             }
 
-            Ok(Event::Job(payload)) => {
-                log::info!("printing {} bytes", payload.len());
-                printer::write(&uart, &payload)?;
-                log::info!("printed");
+            Ok(Event::Job { id, payload }) => {
+                // Refuse rather than blast bytes at a dead engine. The gateway
+                // should have caught this, but its view of the paper is a
+                // cached value that can be seconds stale -- ours is not.
+                if !paper {
+                    log::warn!("job {id} refused, no paper");
+                    ack(&mut client, &id, config::ACK_NO_PAPER)?;
+                    continue;
+                }
 
-                // Straight after a job is when the roll is likeliest to have
-                // just run out.
-                report_paper(&mut client, &uart, &mut paper)?;
+                log::info!("printing {} bytes for {id}", payload.len());
+                printer::write(&uart, &payload)?;
+
+                // Blocks until the printer has worked through the job. One
+                // reply, two answers: it finished, and this is the paper
+                // afterwards.
+                match printer::wait_done(&uart, config::PRINT_TIMEOUT) {
+                    Some(now) => {
+                        log::info!("printed {id}");
+                        ack(&mut client, &id, config::ACK_OK)?;
+                        set_paper(&mut client, now, &mut paper)?;
+                    }
+
+                    None => {
+                        // Silence here means the job may well have printed --
+                        // we simply cannot say so. Claiming success would be
+                        // the lie this whole exchange exists to remove.
+                        log::warn!("no confirmation for {id}");
+                        ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
+                    }
+                }
             }
 
-            Err(RecvTimeoutError::Timeout) => report_paper(&mut client, &uart, &mut paper)?,
+            Err(RecvTimeoutError::Timeout) => poll_paper(&mut client, &uart, &mut paper)?,
 
             // The callback's sender is gone, so the client is gone with it.
             Err(RecvTimeoutError::Disconnected) => break,
@@ -116,9 +139,18 @@ fn state(paper: bool) -> &'static [u8] {
     }
 }
 
-/// Ask about the paper and tell the broker, but only when the answer changed.
-/// A retained publish every five seconds is noise the broker keeps forever.
-fn report_paper(
+/// Publish the ack for one job. Not retained: a retained ack would be
+/// redelivered on every reconnect, long after anyone was waiting for it.
+fn ack(client: &mut EspMqttClient<'_>, id: &str, payload: &[u8]) -> Result<(), EspError> {
+    let topic = format!("{}/{}", config::ACK_TOPIC, id);
+    client.publish(&topic, QoS::AtLeastOnce, false, payload)?;
+
+    Ok(())
+}
+
+/// Ask about the paper and tell the broker. Used on the idle tick; after a job
+/// the answer arrives with the completion instead, so no second question.
+fn poll_paper(
     client: &mut EspMqttClient<'_>,
     uart: &UartDriver,
     known: &mut bool,
@@ -128,6 +160,14 @@ fn report_paper(
         return Ok(());
     };
 
+    set_paper(client, now, known)
+}
+
+/// Publish a paper *change*, so the two things that measure it cannot
+/// disagree. Only on a change: a retained publish every five seconds is noise
+/// the broker keeps forever. The connect arm publishes unconditionally instead,
+/// because a fresh session needs the retained message refreshed either way.
+fn set_paper(client: &mut EspMqttClient<'_>, now: bool, known: &mut bool) -> Result<(), EspError> {
     if now == *known {
         return Ok(());
     }

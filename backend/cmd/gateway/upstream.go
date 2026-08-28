@@ -36,11 +36,12 @@ type printRequest struct {
 	Payload []byte `json:"payload"`
 }
 
-// State mirrors the dispatcher's. The zero value is offline with no paper, so
-// a decode that yields nothing reports the safe answer.
+// State mirrors the dispatcher's. The zero value is offline, with no paper and
+// nothing printing, so a decode that yields nothing reports the safe answer.
 type State struct {
 	Online bool `json:"online"`
 	Paper  bool `json:"paper"`
+	Busy   bool `json:"busy"`
 }
 
 // upstreamError keeps the status an internal service replied with. Some of
