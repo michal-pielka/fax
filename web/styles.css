@@ -66,17 +66,30 @@
     font-family: 'VT323', ui-monospace, monospace;
     /* `margin: auto` on the child rather than `align-items: center`: it centres
        on both axes and still scrolls instead of clipping the top once the
-       receipt grows taller than the viewport. */
+       receipt grows taller than the viewport.
+
+       The button is fixed and does not take part in that, which is what keeps
+       the receipt in the middle of the page rather than in the middle of
+       whatever is left over. */
     display: flex;
     padding: 2.5rem 1rem;
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* The receipt and the panel that describes it, as one centred column.
+     margin: auto moved up here from .roll so the two travel together. */
+  .stack {
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.9rem;
   }
 
   /* The shadow is a drop-shadow on the wrapper, not a box-shadow on the paper,
      so it traces the torn teeth instead of a rectangle. */
   .roll {
     position: relative;
-    margin: auto;
     /* An even shadow on all four sides: every layer has zero offset, so each
        one radiates equally rather than being pushed downward. The four blurs
        still stack from tight to wide, which is what keeps it reading as depth
@@ -165,23 +178,28 @@
   #tools button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   .body:focus, .body:focus-visible { outline: none; }
 
-  /* Fades out and never returns; the page is bare after four seconds. */
+  /* Only the button now: the lamps moved up under the paper they describe. */
   .bar {
     position: fixed;
     left: 0; right: 0; bottom: 0;
     display: flex;
-    align-items: center;
     justify-content: center;
-    gap: 14px;
-    padding: 14px;
+    padding: 1.6rem 1rem;
+    /* The bar spans the page so the button can centre in it, but only the
+       button should be clickable -- otherwise this catches clicks meant for
+       the paper above it. */
+    pointer-events: none;
   }
 
+  /* Barely rounded: a key on a machine, not a pill in an app. */
   .print {
+    pointer-events: auto;
     font: inherit;
-    font-size: 15px;
-    padding: 10px 26px;
+    font-size: clamp(17px, 2.3vw, 24px);
+    letter-spacing: 0.08em;
+    padding: 0.8em 3.6em;
     border: 1px solid var(--ink);
-    border-radius: 999px;
+    border-radius: 3px;
     background: var(--ink);
     color: var(--paper);
     cursor: pointer;
@@ -191,15 +209,51 @@
   .print:disabled { opacity: 0.4; cursor: default; }
   .print:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
-  /* Reserves its line whether or not there is a message, so the button does
-     not jump when one appears. */
+  /* Reserves its line whether or not there is a message, so the panel above
+     does not jump when one appears. */
   .status {
     min-height: 1.2em;
-    font-size: 13px;
+    font-size: clamp(13px, 1.5vw, 16px);
     color: var(--ink-dim);
   }
 
   .status.bad { color: #a33; }
+
+  /* The front panel. Monochrome on purpose: a receipt printer has one colour
+     of ink, and a green LED here would be the one thing on the page that
+     could not have come out of the machine. Lit is a filled dot and full
+     ink; dark is a hollow one, faded. */
+  .lamps {
+    display: flex;
+    gap: clamp(20px, 3.4vw, 40px);
+    font-size: clamp(15px, 2.05vw, 22px);
+    letter-spacing: 0.1em;
+  }
+
+  .lamp {
+    color: rgb(var(--shade) / 0.22);
+    white-space: nowrap;
+  }
+
+  .lamp::before {
+    content: "\25CB";            /* hollow circle */
+    margin-right: 0.45em;
+  }
+
+  .lamp.on {
+    color: var(--ink-dim);
+  }
+
+  .lamp.on::before {
+    content: "\25CF";            /* filled circle */
+  }
+
+  /* BUSY is the only one that means "right now", so it is the only one that
+     moves. Stepped, like everything else here -- a fade would look like a
+     web app rather than a panel lamp. */
+  .lamp.blink { animation: blink 1s steps(2, end) infinite; }
+
+  @keyframes blink { 50% { opacity: 0.25; } }
 
   /* Stepped, not smooth: a stepper motor advances paper in discrete rows. */
   @keyframes feed-out { to { transform: translateY(-118vh); } }

@@ -4,6 +4,12 @@
     .getPropertyValue('--cols'), 10);
   const $ = (id) => document.getElementById(id);
   const body = $('body'), roll = $('roll'), tools = $('tools'), status = $('status');
+  const printBtn = $('print');
+  const lamps = {
+    online: $('lampOnline'),
+    paper: $('lampPaper'),
+    busy: $('lampBusy'),
+  };
 
   $('divTop').textContent = '-'.repeat(COLS);
   $('divBot').textContent = '-'.repeat(COLS);
@@ -224,7 +230,7 @@
   let printing = false;
 
   async function print() {
-    if (printing || roll.classList.contains('out')) return;
+    if (printing || !ready || roll.classList.contains('out')) return;
 
     const doc = document_();
     if (!doc.text.trim()) { setStatus('nothing to print', true); return; }
@@ -269,6 +275,47 @@
       caretInto(body.firstElementChild);
     }, 780);
   }
+
+  /* The front panel.
+
+     Nothing here polls. The firmware notices the roll run out, publishes it,
+     the dispatcher hears it in an MQTT callback, the gateway is already
+     holding a stream open, and it arrives here. A lamp changes because
+     something happened, not because a timer went off.
+
+     EventSource reconnects on its own, and the server's first act on a new
+     connection is to send the current state -- so a dropped connection
+     self-heals with nothing to write here. */
+  let ready = false;
+
+  function setLamps(s) {
+    lamps.online.classList.toggle('on', !!s.online);
+    lamps.paper.classList.toggle('on', !!s.paper);
+    lamps.busy.classList.toggle('on', !!s.busy);
+    lamps.busy.classList.toggle('blink', !!s.busy);
+
+    /* There is one printer and no queue, so a job while it is busy would be
+       refused with a 409. Better to say so before the words are typed. */
+    ready = !!s.online && !!s.paper && !s.busy;
+    printBtn.disabled = !ready;
+  }
+
+  /* Dark until the first event, which is a few milliseconds away. Starting
+     lit would mean the button is clickable before anything is known. */
+  setLamps({});
+
+  const events = new EventSource('/api/events');
+  events.onmessage = (e) => {
+    try {
+      setLamps(JSON.parse(e.data));
+    } catch {
+      /* One bad event is not worth breaking the page over. */
+    }
+  };
+
+  /* Dark rather than stale: if the stream is down we do not know anything,
+     and the last thing we knew is a guess. */
+  events.onerror = () => setLamps({});
 
   $('print').addEventListener('click', print);
 

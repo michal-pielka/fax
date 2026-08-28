@@ -8,8 +8,10 @@
 </head>
 <body>
 
-<div class="roll" id="roll">
-  <div class="paper">
+<div class="stack">
+
+  <div class="roll" id="roll">
+    <div class="paper">
     <!-- Must match the frame in backend/internal/render/render.go. The point
          of the preview is that it looks like what comes out. -->
     <div class="zone fixed">
@@ -30,8 +32,20 @@
   </div>
 </div>
 
-<div class="bar">
+  <!-- The printer's front panel, directly under the paper it describes. Fed by
+       /api/events, so it is what is true right now rather than what was true
+       when the page loaded. -->
+  <div class="lamps" id="lamps" role="status" aria-live="polite">
+    <span class="lamp" id="lampOnline">ONLINE</span>
+    <span class="lamp" id="lampPaper">PAPER</span>
+    <span class="lamp" id="lampBusy">BUSY</span>
+  </div>
+
   <div class="status" id="status" role="status" aria-live="polite"></div>
+
+</div>
+
+<div class="bar">
   <button id="print" class="print">Print</button>
 </div>
 
