@@ -60,8 +60,11 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    *addr,
-		Handler: a.routes(),
+		Addr: *addr,
+		// Every request gets a trace id here, and one line when it
+		// finishes. Outermost, so even a request that never reaches a
+		// handler is still accounted for.
+		Handler: logging.Requests(log)(a.routes()),
 		// A public service needs these. Without them one slow client can
 		// hold a connection open indefinitely.
 		ReadHeaderTimeout: 5 * time.Second,

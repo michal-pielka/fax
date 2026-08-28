@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
 type fakeRenderer struct {
@@ -76,7 +77,10 @@ func do(t *testing.T, a *api, method, path, body string) *httptest.ResponseRecor
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	a.routes().ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+	// Wrapped exactly as main.go wraps it: the print handler takes its job id
+	// from the trace, so a bare routes() would hand the dispatcher an empty one.
+	h := logging.Requests(slog.New(slog.NewTextHandler(io.Discard, nil)))(a.routes())
+	h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
 
 	return rec
 }
@@ -194,43 +198,38 @@ func TestUpstreamStatusMapping(t *testing.T) {
 	}
 }
 
-// Rejections were previously silent, which is the whole reason fail() exists.
+// A rejection has to be answerable afterwards: what was refused, why, to
+// whom, and under which trace. That now takes two lines -- the handler
+// supplies the reason, the middleware supplies everything else -- so this
+// checks they are both there and share an id.
 func TestRejectionsAreLogged(t *testing.T) {
 	var buf bytes.Buffer
 
+	log := logging.Wrap(slog.NewJSONHandler(&buf, nil))
+
 	a := newAPI(&fakeRenderer{}, &fakeDispatcher{})
-	a.log = slog.New(slog.NewJSONHandler(&buf, nil))
+	a.log = log
 
 	req := httptest.NewRequest(http.MethodPost, "/api/print", strings.NewReader(`{"text":"Kraków"}`))
 	req.Header.Set("X-Forwarded-For", "203.0.113.9")
-	a.routes().ServeHTTP(httptest.NewRecorder(), req)
+	req.Header.Set(logging.TraceHeader, "trace-me")
+	logging.Requests(log)(a.routes()).ServeHTTP(httptest.NewRecorder(), req)
 
 	out := buf.String()
-	for _, want := range []string{`"msg":"rejected"`, `"status":400`, `"ip":"203.0.113.9"`, "unsupported character"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("log missing %s\ngot: %s", want, out)
+	want := []string{
+		`"msg":"rejected"`, "unsupported character", // from the handler
+		`"msg":"request"`, `"status":400`, `"ip":"203.0.113.9"`, // from the middleware
+	}
+
+	for _, w := range want {
+		if !strings.Contains(out, w) {
+			t.Errorf("log missing %s\ngot: %s", w, out)
 		}
 	}
-}
 
-// Caddy appends to X-Forwarded-For rather than replacing it, so a caller can
-// prepend anything. Trusting the first entry is how spoofed addresses get into
-// logs; the last one is the address Caddy actually saw.
-func TestClientIPIgnoresSpoofedPrefix(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.9")
-
-	if got := clientIP(r); got != "203.0.113.9" {
-		t.Errorf("clientIP = %q, want the last entry 203.0.113.9", got)
-	}
-}
-
-func TestClientIPFallsBackToRemoteAddr(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.RemoteAddr = "198.51.100.7:54321"
-
-	if got := clientIP(r); got != "198.51.100.7" {
-		t.Errorf("clientIP = %q, want 198.51.100.7", got)
+	// Two lines, one trace, or they cannot be joined up after the fact.
+	if n := strings.Count(out, `"trace":"trace-me"`); n != 2 {
+		t.Errorf("trace appears on %d lines, want 2\ngot: %s", n, out)
 	}
 }
 

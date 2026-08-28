@@ -43,8 +43,11 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    *addr,
-		Handler: a.routes(),
+		Addr: *addr,
+		// Every request gets a trace id here, and one line when it
+		// finishes. Outermost, so even a request that never reaches a
+		// handler is still accounted for.
+		Handler: logging.Requests(log)(a.routes()),
 		// Shorter than the gateway's: rendering is pure computation with no
 		// hardware to wait on, so nothing here should take seconds.
 		ReadHeaderTimeout: 5 * time.Second,

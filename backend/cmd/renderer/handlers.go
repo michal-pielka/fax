@@ -56,14 +56,14 @@ func (a *api) render(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		a.log.Error("validate", "err", err)
+		a.log.ErrorContext(r.Context(), "validate", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 
 		return
 	}
 
 	payload := render.Render(d)
-	a.log.Info("rendered", "chars", len(d.Text), "spans", len(d.Spans), "bytes", len(payload))
+	a.log.InfoContext(r.Context(), "rendered", "chars", len(d.Text), "spans", len(d.Spans), "bytes", len(payload))
 
 	writeJSON(w, http.StatusOK, renderResponse{Payload: payload})
 }

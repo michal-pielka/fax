@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
 // Renderer and Dispatcher are interfaces so the handlers can be tested without
@@ -102,6 +103,10 @@ func (c *jsonClient) do(ctx context.Context, method, path string, body io.Reader
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	// The same id the gateway logged, so the renderer's and dispatcher's own
+	// lines join the trace rather than starting new ones.
+	req.Header.Set(logging.TraceHeader, logging.Trace(ctx))
+
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -163,6 +168,7 @@ func (c *dispatcherClient) Events(ctx context.Context) (io.ReadCloser, error) {
 	}
 
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set(logging.TraceHeader, logging.Trace(ctx))
 
 	resp, err := c.stream.Do(req)
 	if err != nil {

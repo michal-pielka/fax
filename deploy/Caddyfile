@@ -1,6 +1,17 @@
 fax.pielka.sh {
 	encode gzip
 
+	# The edge sees requests no service does: static files, the broker
+	# websocket, and anything refused before it reaches the gateway. Without
+	# this those are simply invisible.
+	#
+	# stdout so it lands in the same `docker compose logs` as everything else,
+	# and under the same rotation.
+	log {
+		output stdout
+		format json
+	}
+
 	handle /mqtt* {
 		reverse_proxy mosquitto:9001
 	}

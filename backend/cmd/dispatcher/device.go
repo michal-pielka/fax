@@ -271,11 +271,11 @@ func (d *Device) onAck(_ mqtt.Client, m mqtt.Message) {
 
 	var a ack
 	if err := json.Unmarshal(m.Payload(), &a); err != nil {
-		d.log.Error("bad ack payload", "id", id, "payload", truncate(string(m.Payload()), 120), "err", err)
+		d.log.Error("bad ack payload", "trace", id, "payload", truncate(string(m.Payload()), 120), "err", err)
 		return
 	}
 
-	d.log.Info("device ack", "id", id, "ok", a.OK, "reason", a.Error)
+	d.log.Info("device ack", "trace", id, "ok", a.OK, "reason", a.Error)
 
 	d.waitMu.Lock()
 	ch, ok := d.waiting[id]
@@ -284,7 +284,7 @@ func (d *Device) onAck(_ mqtt.Client, m mqtt.Message) {
 	if !ok {
 		// The request gave up, or this is a duplicate delivery of an ack we
 		// already handled. Either way there is nobody left to tell.
-		d.log.Warn("ack for an unknown job", "id", id)
+		d.log.Warn("ack for an unknown job", "trace", id)
 		return
 	}
 
@@ -357,7 +357,7 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 		return ctx.Err()
 	}
 
-	d.log.Info("published", "id", id, "bytes", len(payload))
+	d.log.InfoContext(ctx, "published", "bytes", len(payload))
 
 	// Deliberately not tied to ctx: the paper is moving now and will keep
 	// moving whether or not anyone is still on the other end of the request.
@@ -382,7 +382,7 @@ func (d *Device) awaitAck(id string, acks <-chan ack) {
 	case <-time.After(ackTimeout):
 		// The receipt may well be in the printer right now. All that is
 		// certain is that nobody said so.
-		d.log.Warn("no acknowledgement", "id", id)
+		d.log.Warn("no acknowledgement", "trace", id)
 		d.setResult(Result{ID: id, Error: reasonNoConfirmation})
 	}
 }

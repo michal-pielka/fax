@@ -68,8 +68,10 @@ func main() {
 	a := &api{printer: dev, log: log}
 
 	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           a.routes(),
+		Addr: *addr,
+		// Reuses the trace id the gateway sent, so one request reads as one
+		// trace across both services rather than two unrelated ones.
+		Handler:           logging.Requests(log)(a.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		// Ordinary again. Waiting for the acknowledgement moved off the

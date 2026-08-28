@@ -86,7 +86,7 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	default:
 		// Reaching the broker is the dispatcher's job, so failing to is the
 		// dispatcher's fault, not a statement about the printer.
-		a.log.Error("publish failed", "id", req.ID, "err", err)
+		a.log.ErrorContext(r.Context(), "publish failed", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "cannot reach the broker")
 	}
 }
@@ -139,7 +139,7 @@ func (a *api) events(w http.ResponseWriter, r *http.Request) {
 
 	stream, err := sse.Start(w)
 	if err != nil {
-		a.log.Error("cannot start event stream", "err", err)
+		a.log.ErrorContext(r.Context(), "cannot start event stream", "err", err)
 		return
 	}
 

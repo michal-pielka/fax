@@ -4,14 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/logging"
 	"github.com/michal-pielka/fax/server/internal/sse"
 )
 
@@ -59,7 +56,7 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		a.log.Error("validate", "err", err)
+		a.log.ErrorContext(r.Context(), "validate", "err", err)
 		a.fail(w, r, http.StatusInternalServerError, "internal error")
 
 		return
@@ -72,17 +69,18 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Not stored anywhere: the id appears in the log line and travels to the
-	// firmware in the MQTT topic, so a redelivered job can be recognised
-	// rather than printed twice.
-	id := uuid.NewString()
+	// The trace id is the job id. One value covers the HTTP request, both
+	// internal calls, the MQTT topic, the firmware's own logs and the ack that
+	// comes back -- so a single grep follows one receipt across four processes.
+	// Still stored nowhere: it lives as long as the request does.
+	id := logging.Trace(r.Context())
 
 	if err := a.dispatcher.Print(r.Context(), id, payload); err != nil {
 		a.upstreamFailed(w, r, "dispatcher", err)
 		return
 	}
 
-	a.log.Info("print accepted", "id", id, "ip", clientIP(r), "chars", len(d.Text), "bytes", len(payload))
+	a.log.InfoContext(r.Context(), "print accepted", "chars", len(d.Text), "bytes", len(payload))
 
 	// 202: the printer has been claimed and the job is on its way, which is
 	// everything that can honestly be said this early. Whether it came out
@@ -121,7 +119,7 @@ func (a *api) events(w http.ResponseWriter, r *http.Request) {
 
 	stream, err := sse.Start(w)
 	if err != nil {
-		a.log.Error("cannot start event stream", "err", err, "ip", clientIP(r))
+		a.log.ErrorContext(r.Context(), "cannot start event stream", "err", err)
 		return
 	}
 
@@ -183,7 +181,7 @@ func (a *api) upstreamFailed(w http.ResponseWriter, r *http.Request, service str
 	}
 
 	// The underlying error only appears here; fail() records the response.
-	a.log.Error("upstream failed", "service", service, "err", err)
+	a.log.ErrorContext(r.Context(), "upstream failed", "service", service, "err", err)
 	a.fail(w, r, http.StatusBadGateway, service+" is unavailable")
 }
 
@@ -206,12 +204,9 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, code int, msg string)
 		level = slog.LevelError
 	}
 
-	a.log.Log(r.Context(), level, "rejected",
-		"status", code,
-		"reason", msg,
-		"ip", clientIP(r),
-		"path", r.URL.Path,
-	)
+	// Status, path, caller and duration all arrive on the request line the
+	// middleware writes; this only has to add the reason.
+	a.log.Log(r.Context(), level, "rejected", "reason", msg)
 
 	writeJSON(w, code, map[string]string{"error": msg})
 }
@@ -225,19 +220,3 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, code int, msg string)
 //
 // So the last entry is the trustworthy one, and the widespread habit of taking
 // the first is how spoofed addresses end up in logs and rate limiters.
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		if i := strings.LastIndexByte(fwd, ','); i >= 0 {
-			return strings.TrimSpace(fwd[i+1:])
-		}
-
-		return strings.TrimSpace(fwd)
-	}
-
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-
-	return host
-}
