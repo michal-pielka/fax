@@ -338,64 +338,58 @@
     setStatus(last.error || 'did not print', true);
   }
 
-  /* The paper leaving and fresh paper arriving is the confirmation. */
+  /* The paper leaving and fresh paper arriving is the confirmation.
+
+     animationend rather than setTimeout, so the durations live in exactly one
+     place. They used to be written in both files and drift silently.
+
+     No requestAnimationFrame and no will-change here, deliberately. Promoting
+     the receipt to its own layer a frame early would help if the four
+     drop-shadow filters were the bottleneck -- but rAF does not fire in a
+     background tab, so printing and switching tabs would leave the receipt
+     parked off screen with the old text still in it. If this ever stutters on
+     real hardware, `will-change: transform` in the stylesheet is the next
+     thing to try; it costs greyscale antialiasing on the receipt's text. */
+  function onceEnded(name, fn) {
+    let fired = false;
+
+    const finish = () => {
+      if (fired) return;
+
+      fired = true;
+      roll.removeEventListener('animationend', ended);
+      fn();
+    };
+
+    const ended = (e) => {
+      // animationend bubbles, and the hint dots animate inside this subtree.
+      if (e.animationName === name) finish();
+    };
+
+    roll.addEventListener('animationend', ended);
+
+    /* A backstop, because the cost of this event not arriving is a receipt
+       parked off screen and an app that looks broken until a reload. The
+       duration is read back out of the stylesheet rather than written here,
+       so the timings still live in exactly one place. */
+    const seconds = parseFloat(getComputedStyle(roll).animationDuration) || 0;
+    setTimeout(finish, seconds * 1000 + 250);
+  }
+
   function feed() {
     roll.classList.add('out');
-    setTimeout(() => {
+
+    onceEnded('feed-out', () => {
       body.innerHTML = '<div class="ln"><br></div>';
       roll.classList.remove('out');
       roll.classList.add('in');
-      setTimeout(() => roll.classList.remove('in'), 440);
+
+      onceEnded('feed-in', () => roll.classList.remove('in'));
+
       body.focus();
       caretInto(body.firstElementChild);
-    }, 780);
+    });
   }
-
-  /* The front panel.
-
-     Nothing here polls. The firmware notices the roll run out, publishes it,
-     the dispatcher hears it in an MQTT callback, the gateway is already
-     holding a stream open, and it arrives here. A lamp changes because
-     something happened, not because a timer went off.
-
-     EventSource reconnects on its own, and the server's first act on a new
-     connection is to send the current state -- so a dropped connection
-     self-heals with nothing to write here. */
-  let ready = false;
-
-  function setLamps(s) {
-    lamps.online.classList.toggle('on', !!s.online);
-    lamps.paper.classList.toggle('on', !!s.paper);
-    lamps.busy.classList.toggle('on', !!s.busy);
-    lamps.busy.classList.toggle('blink', !!s.busy);
-
-    /* There is one printer and no queue, so a job while it is busy would be
-       refused with a 409. Better to say so before the words are typed. */
-    ready = !!s.online && !!s.paper && !s.busy;
-    printBtn.disabled = !ready;
-  }
-
-  /* Dark until the first event, which is a few milliseconds away. Starting
-     lit would mean the button is clickable before anything is known. */
-  setLamps({});
-
-  const events = new EventSource('/api/events');
-  events.onmessage = (e) => {
-    let state;
-
-    try {
-      state = JSON.parse(e.data);
-    } catch {
-      return; /* One bad event is not worth breaking the page over. */
-    }
-
-    setLamps(state);
-    settle(state.last);
-  };
-
-  /* Dark rather than stale: if the stream is down we do not know anything,
-     and the last thing we knew is a guess. */
-  events.onerror = () => setLamps({});
 
   $('print').addEventListener('click', print);
 

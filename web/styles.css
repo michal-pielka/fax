@@ -297,11 +297,22 @@
 
   @keyframes blink { 50% { opacity: 0.25; } }
 
-  /* Stepped, not smooth: a stepper motor advances paper in discrete rows. */
-  @keyframes feed-out { to { transform: translateY(-118vh); } }
-  @keyframes feed-in { from { transform: translateY(-40vh); } }
-  .roll.out { animation: feed-out 760ms steps(16, end) forwards; }
-  .roll.in { animation: feed-in 420ms steps(9, end); }
+  /* The paper leaves upward and fresh paper arrives behind it.
+     
+     Smooth, not stepped. Stepping was stylisation rather than realism: a real
+     stepper advances a couple of hundred microsteps per printed row, far below
+     anything the eye resolves, so the discreteness only ever read as stutter.
+     
+     translate3d rather than translateY so the move is unambiguously a
+     compositor job -- see the willChange dance in app.js for why that matters
+     on an element carrying four drop-shadows. */
+  @keyframes feed-out { to { transform: translate3d(0, -118vh, 0); } }
+  @keyframes feed-in { from { transform: translate3d(0, -42vh, 0); } }
+
+  /* Accelerating away, then settling in. Paper leaving a slot picks up speed;
+     paper arriving comes to rest. */
+  .roll.out { animation: feed-out 520ms cubic-bezier(0.4, 0, 1, 1) forwards; }
+  .roll.in { animation: feed-in 340ms cubic-bezier(0, 0, 0.2, 1); }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
