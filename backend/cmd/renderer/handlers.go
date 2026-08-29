@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/render"
@@ -56,14 +57,21 @@ func (a *api) render(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		a.log.ErrorContext(r.Context(), "validate", "err", err)
+		a.log.ErrorContext(r.Context(), "validator failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 
 		return
 	}
 
 	payload := render.Render(d)
-	a.log.InfoContext(r.Context(), "rendered", "chars", len(d.Text), "spans", len(d.Spans), "bytes", len(payload))
+	// Debug: the request line above already reports that this happened, how
+	// long it took and how big the answer was. All this adds is the shape of
+	// the document, which matters when a receipt comes out looking wrong.
+	a.log.DebugContext(r.Context(), "rendered",
+		"chars", utf8.RuneCountInString(d.Text),
+		"spans", len(d.Spans),
+		"bytes", len(payload),
+	)
 
 	writeJSON(w, http.StatusOK, renderResponse{Payload: payload})
 }

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+
+	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
 // Errors the printer itself is responsible for, as opposed to the dispatcher
@@ -211,7 +213,7 @@ func (d *Device) onState(_ mqtt.Client, m mqtt.Message) {
 	if err := json.Unmarshal(m.Payload(), &s); err != nil {
 		// Truncated: this is whatever the device sent, and it should not be
 		// able to decide how much of your log it occupies.
-		d.log.Error("bad state payload", "payload", truncate(string(m.Payload()), 120), "err", err)
+		d.log.Error("bad state payload", "payload", logging.Truncate(string(m.Payload()), 120), "err", err)
 		return
 	}
 
@@ -271,7 +273,7 @@ func (d *Device) onAck(_ mqtt.Client, m mqtt.Message) {
 
 	var a ack
 	if err := json.Unmarshal(m.Payload(), &a); err != nil {
-		d.log.Error("bad ack payload", "trace", id, "payload", truncate(string(m.Payload()), 120), "err", err)
+		d.log.Error("bad ack payload", "trace", id, "payload", logging.Truncate(string(m.Payload()), 120), "err", err)
 		return
 	}
 
@@ -446,12 +448,4 @@ func (d *Device) Busy() bool {
 	defer d.waitMu.Unlock()
 
 	return len(d.waiting) > 0
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-
-	return s[:n] + "..."
 }

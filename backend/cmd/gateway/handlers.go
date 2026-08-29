@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/logging"
@@ -56,7 +57,7 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		a.log.ErrorContext(r.Context(), "validate", "err", err)
+		a.log.ErrorContext(r.Context(), "validator failed", "err", err)
 		a.fail(w, r, http.StatusInternalServerError, "internal error")
 
 		return
@@ -80,7 +81,24 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.log.InfoContext(r.Context(), "print accepted", "chars", len(d.Text), "bytes", len(payload))
+	// The message itself is logged, deliberately.
+	//
+	// It looks like a privacy decision and mostly is not: the entire purpose
+	// of this endpoint is to print the text onto paper in a flat where it will
+	// be read. Logging adds no exposure the printing did not already create.
+	//
+	// What it does add is persistence -- 30MB of rotated logs rather than a
+	// receipt that gets thrown away -- and that is the actual trade. It is
+	// worth it because a public endpoint that prints into someone's home needs
+	// an answer to "what did they send", and there is no other record.
+	//
+	// Truncated because the rune limit could be raised later, and quoted by
+	// both handlers, so a newline in the message cannot forge a log line.
+	a.log.InfoContext(r.Context(), "print accepted",
+		"chars", utf8.RuneCountInString(d.Text),
+		"bytes", len(payload),
+		"text", logging.Truncate(d.Text, 512),
+	)
 
 	// 202: the printer has been claimed and the job is on its way, which is
 	// everything that can honestly be said this early. Whether it came out

@@ -116,10 +116,23 @@ func Requests(log *slog.Logger) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(rec, r.WithContext(ctx))
 
+			// Levelled by status, so `--log-level=warn` leaves exactly the
+			// requests that went wrong. Logging every request at info made a
+			// 500 arrive as an ERROR line followed by an INFO one describing
+			// the same request.
+			level := slog.LevelInfo
+
+			switch {
+			case rec.status >= http.StatusInternalServerError:
+				level = slog.LevelError
+			case rec.status >= http.StatusBadRequest:
+				level = slog.LevelWarn
+			}
+
 			// For a stream this lands when the client disconnects, so the
 			// duration is how long the tab was open. That is the useful
 			// number for a stream and the useful number for a request.
-			log.InfoContext(ctx, "request",
+			log.Log(ctx, level, "request",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rec.status,
@@ -154,6 +167,17 @@ func (w *recorder) Write(b []byte) (int, error) {
 // underneath. Without it both Flush and SetWriteDeadline fail, and every
 // event stream dies the instant it tries to send anything.
 func (w *recorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Truncate bounds a string that came from somewhere else -- a printed
+// message, a device payload -- before it reaches a log line. Whatever sent it
+// does not get to decide how much of the log it occupies.
+func Truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+
+	return s[:n] + "..."
+}
 
 // ClientIP is the caller as seen from behind Caddy.
 //

@@ -161,3 +161,55 @@ func TestRecorderDefaultsTo200(t *testing.T) {
 		t.Errorf("request line = %q", out.String())
 	}
 }
+
+// A 500 arriving as ERROR from the handler and INFO from the middleware made
+// --log-level=warn hide half the story of the same request.
+func TestRequestLineIsLevelledByStatus(t *testing.T) {
+	for _, tt := range []struct {
+		status int
+		want   string
+	}{
+		{http.StatusOK, "level=INFO"},
+		{http.StatusBadRequest, "level=WARN"},
+		{http.StatusInternalServerError, "level=ERROR"},
+	} {
+		var out bytes.Buffer
+
+		h := Requests(slog.New(slog.NewTextHandler(&out, nil)))(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))
+
+		if !strings.Contains(out.String(), tt.want) {
+			t.Errorf("status %d logged %q, want %s", tt.status, out.String(), tt.want)
+		}
+	}
+}
+
+// Whatever sent the string does not get to decide how much of the log it
+// occupies.
+func TestTruncate(t *testing.T) {
+	if got := Truncate("short", 32); got != "short" {
+		t.Errorf("Truncate kept %q", got)
+	}
+
+	if got := Truncate(strings.Repeat("x", 100), 10); got != strings.Repeat("x", 10)+"..." {
+		t.Errorf("Truncate = %q", got)
+	}
+}
+
+// slog quotes values that need it, so a newline in a printed message cannot
+// close the line and forge another. Worth pinning: the message is attacker
+// controlled and goes straight into the log.
+func TestMessagesCannotForgeALogLine(t *testing.T) {
+	var out bytes.Buffer
+
+	Wrap(slog.NewTextHandler(&out, nil)).
+		Info("print accepted", "text", "hello\nlevel=ERROR msg=\"forged\"")
+
+	if strings.Count(out.String(), "\n") != 1 {
+		t.Errorf("a newline escaped into the log: %q", out.String())
+	}
+}
