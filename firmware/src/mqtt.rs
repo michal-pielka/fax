@@ -1,11 +1,5 @@
-//! The broker connection.
-//!
-//! The important rule lives here: the ESP-IDF MQTT task is BLOCKED for as long
-//! as our callback runs. Calling the client from inside it, or writing to the
-//! UART from inside it, deadlocks -- both need that task to make progress.
-//!
-//! So the callback does one thing: hand the event to the main thread over a
-//! channel. Everything real happens there.
+//! The broker connection. The rule: the ESP-IDF MQTT task is BLOCKED while our
+//! callback runs, so the callback only hands events to the main thread.
 
 use std::sync::mpsc::{self, Receiver};
 
@@ -21,18 +15,13 @@ pub enum Event {
     /// (Re)connected. Subscriptions do not survive a reconnect, so the main
     /// thread has to resubscribe every time this arrives, not just once.
     Connected,
-    /// A finished job: raw ESC/POS, ready for the printer.
-    ///
-    /// The id comes from the topic rather than the payload, which is what
-    /// keeps the payload pure ESC/POS with no parser on this end. It travels
-    /// back out on the ack so the dispatcher knows which job finished.
+    /// A finished job. The id comes from the topic, which keeps the payload
+    /// pure ESC/POS, and travels back out on the ack.
     Job { id: String, payload: Vec<u8> },
 }
 
-/// Connects to the broker and returns the client plus the event stream.
-///
-/// The client is returned so the main thread can subscribe and publish; the
-/// receiver is how it learns anything happened.
+/// Connects, returning the client so the main thread can subscribe and
+/// publish, and the receiver so it learns anything happened.
 pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> {
     let options = MqttClientConfiguration {
         client_id: Some(config::CLIENT_ID),
@@ -43,13 +32,8 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
         // unplugged, or reconnecting would print hours of backlog at once.
         disable_clean_session: false,
 
-        // Verify the broker against ESP-IDF's built-in Mozilla root bundle,
-        // which includes Let's Encrypt. Pinning one certificate instead would
-        // be smaller, but would break every time the cert is renewed.
-        //
-        // This only takes effect for an mqtts:// URL; with mqtt:// the
-        // connection is plaintext regardless, so the scheme in MQTT_URL is
-        // what actually decides whether any of this matters.
+        // The built-in Mozilla bundle, rather than a pinned cert that would
+        // break on renewal. Only matters if MQTT_URL is mqtts://.
         crt_bundle_attach: Some(esp_crt_bundle_attach),
 
         lwt: Some(LwtConfiguration {
@@ -62,42 +46,32 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
         ..Default::default()
     };
 
-    // Bounded on purpose. The main thread spends about half a second per job
-    // clocking bytes out at 9600 baud, so anything arriving faster than that
-    // grows the queue forever -- and the queue is heap on a board with 300 KB
-    // of it. Four is enough to absorb a double-tapped Print button.
+    // Bounded: the main thread needs half a second per job, so anything
+    // faster grows heap forever on a board with 300 KB of it.
     let (tx, rx) = mpsc::sync_channel(4);
 
     let client = EspMqttClient::new_cb(config::MQTT_URL, &options, move |event| {
         match event.payload() {
-            // try_send throughout, never send: SyncSender::send BLOCKS when the
-            // channel is full, and blocking here blocks the MQTT task -- the
-            // exact deadlock this module is arranged around. It would also
-            // stall the PUBACK, leaving the broker unsure the job ever landed.
+            // try_send, never send: send blocks when full, which blocks the
+            // MQTT task and stalls the PUBACK.
             EventPayload::Connected(_) => {
                 if tx.try_send(Event::Connected).is_err() {
                     log::error!("channel full, dropped a connect -- not subscribed");
                 }
             }
 
-            // Only one topic is subscribed, so anything arriving here is a job.
-            //
-            // Chunk reassembly is deliberately absent: the receive buffer is
-            // 4KB and the gateway caps documents at 255 characters, so a
-            // payload cannot exceed roughly 600 bytes. Raise that limit past
-            // ~3500 and long receipts will silently arrive in pieces.
+            // One topic subscribed, so this is a job. No chunk reassembly:
+            // raise the 255-character cap past ~3500 and receipts will split.
             EventPayload::Received { topic, data, .. } => {
-                // The topic is absent on the continuation chunks of a split
-                // payload. That cannot happen at our sizes -- see above -- so
-                // rather than reassemble, say so and drop it.
+                // No topic means a continuation chunk, which cannot happen
+                // at our sizes. Say so and drop it rather than reassemble.
                 let Some(id) = topic.and_then(|t| t.rsplit('/').next()) else {
                     log::warn!("job with no topic, dropped");
                     return;
                 };
 
-                // Dropping is the right answer here: there is no queue in this
-                // design, and a printer that cannot keep up should shed work
-                // rather than exhaust the heap and reboot mid-receipt.
+                // No queue in this design: shed work rather than exhaust the
+                // heap and reboot mid-receipt.
                 let job = Event::Job {
                     id: id.to_string(),
                     payload: data.to_vec(),

@@ -14,9 +14,7 @@
   $('divTop').textContent = '-'.repeat(COLS);
   $('divBot').textContent = '-'.repeat(COLS);
 
-  /* Only what the printer can actually do. ESC/POS has no strikethrough at
-     all, and the server's document model carries bold and underline and
-     nothing else -- so alignment, sizes and inverse would look right here and
+  /* Only what the printer does. Anything else would look right here and
      silently vanish on paper. */
   const TOOLS = [
     { key: 'bold',  label: 'B', title: 'Bold',      attr: 'bold' },
@@ -43,9 +41,8 @@
     return all.slice(Math.min(i, j), Math.max(i, j) + 1);
   }
 
-  /* Put the caret inside a line, never in .body itself. Typing while the
-     caret sits directly in .body produces bare text nodes, which is what
-     normalize() then has to clean up. */
+  /* Never leave the caret in .body itself: typing there makes bare text
+     nodes for normalize() to clean up. */
   function caretInto(line, atEnd) {
     const r = document.createRange();
     r.selectNodeContents(line);
@@ -55,12 +52,8 @@
     s.addRange(r);
   }
 
-  /* contenteditable leaves bare text nodes behind; per-line styling needs
-     every child to be a real .ln element.
-     Stray nodes are *moved* into the preceding line rather than replaced by a
-     new one. Two reasons: a new line per stray node scattered fast typing one
-     character per row, and moving keeps the text node object alive so the
-     caret offset saved below still resolves. */
+  /* Per-line styling needs every child to be a real .ln. Strays are moved
+     into the previous line, not replaced, so the caret still resolves. */
   function normalize() {
     if (!body.firstChild) {
       body.innerHTML = '<div class="ln"><br></div>';
@@ -139,11 +132,8 @@
     if (document.activeElement === body) placeTools();
   });
 
-  /* The paper is a fixed size, so writing space genuinely runs out.
-     Whether an insertion overflows cannot be known in advance -- it depends on
-     where the text happens to wrap -- so the edit is allowed to land, measured,
-     and rolled back if it did not fit. Checking capacity beforehand instead
-     always lets one character too many through. */
+  /* Overflow depends on where text wraps, so it cannot be known in advance.
+     The edit lands, gets measured, and is rolled back if it did not fit. */
   const atCapacity = () => body.scrollHeight > body.clientHeight;
 
   /* The caret is recorded as a line index plus an offset, because rolling back
@@ -189,15 +179,8 @@
     setStatus('');
   });
 
-  /* Paste needs its own handler for two reasons.
-
-     contenteditable inserts whatever markup the clipboard holds, and this
-     editor keeps styling per line rather than inline -- so pasted HTML both
-     survives into the DOM and means nothing to the document model.
-
-     And the rollback above is all-or-nothing: anything longer than the paper
-     is thrown away entirely, which on a phone is most pastes and reads as
-     "paste is broken". Trimming to what fits is what people expect. */
+  /* Plain text only, and trimmed to fit. The rollback above is
+     all-or-nothing, which on a phone silently ate most pastes. */
   body.addEventListener('paste', (e) => {
     e.preventDefault();
 
@@ -206,11 +189,8 @@
 
     const before = { html: body.innerHTML, caret: caretMark() };
 
-    /* Put back the starting state and insert the first `n` characters,
-       reporting whether the result still fits on the paper.
-
-       execCommand is deprecated everywhere and still the only reliable way to
-       drop plain text at the caret with the undo stack intact. */
+    /* Insert the first n characters and report whether they fit. execCommand
+       is deprecated and still the only way to keep the undo stack. */
     const fits = (n) => {
       body.innerHTML = before.html;
       if (before.caret) caretRestore(before.caret);
@@ -252,9 +232,8 @@
     if (!tools.contains(e.target) && !body.contains(e.target)) tools.classList.remove('on');
   });
 
-  /* The server wants flat text plus character-range spans, while the editor
-     styles whole lines -- so each styled line becomes one span over its slice
-     of the joined text. */
+  /* The server wants flat text plus character ranges, so each styled line
+     becomes one span over its slice of the joined text. */
   function document_() {
     const lines = [...body.children].map(l => l.textContent.replace(/ /g, ' '));
     const spans = [];
@@ -281,9 +260,8 @@
 
   let printing = false;
 
-  /* The id of the job we are waiting to hear about, from the 202. Printing is
-     fire-and-forget now: the request only says the job was accepted, and how
-     it ended arrives on the event stream tagged with this. */
+  /* The job id from the 202. Printing is fire-and-forget: how it ended
+     arrives on the event stream tagged with this. */
   let pending = null;
 
   async function print() {
@@ -304,9 +282,8 @@
       });
 
       if (!res.ok) {
-        /* Deliberately does not clear the editor: with no queue behind it, a
-           failed send means the words only exist in this textarea. Everything
-           knowable up front still fails here -- offline, out of paper, busy. */
+        /* Does not clear the editor: with no queue behind it, a failed send
+           means the words exist only here. */
         const { error } = await res.json().catch(() => ({}));
         setStatus(error || `failed (${res.status})`, true);
         return;
@@ -338,18 +315,8 @@
     setStatus(last.error || 'did not print', true);
   }
 
-  /* The paper leaving and fresh paper arriving is the confirmation.
-
-     animationend rather than setTimeout, so the durations live in exactly one
-     place. They used to be written in both files and drift silently.
-
-     No requestAnimationFrame and no will-change here, deliberately. Promoting
-     the receipt to its own layer a frame early would help if the four
-     drop-shadow filters were the bottleneck -- but rAF does not fire in a
-     background tab, so printing and switching tabs would leave the receipt
-     parked off screen with the old text still in it. If this ever stutters on
-     real hardware, `will-change: transform` in the stylesheet is the next
-     thing to try; it costs greyscale antialiasing on the receipt's text. */
+  /* animationend rather than setTimeout, so the durations live in one place.
+     No rAF or will-change: rAF does not fire in a background tab. */
   function onceEnded(name, fn) {
     let fired = false;
 
@@ -368,10 +335,8 @@
 
     roll.addEventListener('animationend', ended);
 
-    /* A backstop, because the cost of this event not arriving is a receipt
-       parked off screen and an app that looks broken until a reload. The
-       duration is read back out of the stylesheet rather than written here,
-       so the timings still live in exactly one place. */
+    /* A backstop: a missed event parks the receipt off screen. The duration
+       is read from the stylesheet, so the timings stay in one place. */
     const seconds = parseFloat(getComputedStyle(roll).animationDuration) || 0;
     setTimeout(finish, seconds * 1000 + 250);
   }
@@ -391,16 +356,8 @@
     });
   }
 
-  /* The front panel.
-
-     Nothing here polls. The firmware notices the roll run out, publishes it,
-     the dispatcher hears it in an MQTT callback, the gateway is already
-     holding a stream open, and it arrives here. A lamp changes because
-     something happened, not because a timer went off.
-
-     EventSource reconnects on its own, and the server's first act on a new
-     connection is to send the current state -- so a dropped connection
-     self-heals with nothing to write here. */
+  /* The front panel. Nothing polls: a lamp changes because something
+     happened. EventSource reconnects and re-reads state on its own. */
   let ready = false;
 
   function setLamps(s) {

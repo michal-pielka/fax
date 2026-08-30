@@ -63,16 +63,14 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The request context carries through to the publish, so a gateway that
-	// gives up -- because its own caller closed the tab -- does not leave this
-	// blocked on a broker that is not answering.
+	// The request context reaches the publish, so a gateway that gives up
+	// does not leave this blocked on a silent broker.
 	err := a.printer.Publish(r.Context(), req.ID, req.Payload)
 
 	switch {
 	case err == nil:
-		// 202, not 200: the broker has the job and the printer is claimed, but
-		// the paper has not moved yet. How it ends arrives on the event
-		// stream, tagged with this id.
+		// 202: the broker has the job and the printer is claimed. How it ends
+		// arrives on the event stream, tagged with this id.
 		writeJSON(w, http.StatusAccepted, map[string]string{"id": req.ID, "status": "accepted"})
 
 	case errors.Is(err, ErrNoPaper), errors.Is(err, ErrBusy):
@@ -91,13 +89,8 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// stateResponse is State plus the two things the device does not publish:
-// whether a job is on the printer right now, and how the last one ended. Both
-// are the dispatcher's own knowledge, not anything the firmware says about
-// itself.
-//
-// Last is what makes a fire-and-forget print honest. Busy going false says a
-// job ended; only this says which one, and whether it worked.
+// stateResponse adds the two things the device does not publish: whether a job
+// is on the printer, and how the last one ended. Both are ours to know.
 type stateResponse struct {
 	State
 	Busy bool    `json:"busy"`
@@ -108,9 +101,8 @@ func (a *api) state(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, a.snapshot())
 }
 
-// snapshot reads both halves of what the printer is doing. Deliberately not
-// under a single lock: the two are guarded separately, and a reader that took
-// both would have to agree on an order with everything else that takes either.
+// snapshot deliberately takes no single lock: the two halves are guarded
+// separately, and holding both would impose an ordering on everything else.
 func (a *api) snapshot() stateResponse {
 	s := stateResponse{State: a.printer.State(), Busy: a.printer.Busy()}
 
@@ -125,14 +117,8 @@ func (a *api) snapshot() stateResponse {
 // connection is not mistaken for a dead one by anything in between.
 const eventHeartbeat = 20 * time.Second
 
-// events streams the printer's state to the gateway, which fans it out to
-// browsers. One consumer in practice, but written for any number: during a
-// redeploy there are briefly two gateways, and each needs its own stream.
-//
-// Nothing polls anywhere on this path. The dispatcher already knows the moment
-// anything changes -- that is what Subscribe reports -- so the only question
-// was how to tell the gateway without the dispatcher having to know it exists.
-// The gateway holding one connection open answers it.
+// events streams state to the gateway, which fans it out. Written for any
+// number of readers: a redeploy briefly has two gateways.
 func (a *api) events(w http.ResponseWriter, r *http.Request) {
 	changed, unsubscribe := a.printer.Subscribe()
 	defer unsubscribe()
@@ -173,9 +159,8 @@ func (a *api) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// health reports on the dispatcher, not the printer. An offline printer is a
-// normal condition and must not make this process look unhealthy, or an
-// orchestrator would restart it pointlessly.
+// health reports on the dispatcher, not the printer: an offline printer is
+// normal, and must not get this process restarted.
 func (a *api) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

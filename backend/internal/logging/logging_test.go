@@ -32,9 +32,8 @@ func TestRejectsGarbage(t *testing.T) {
 	}
 }
 
-// Caddy appends to X-Forwarded-For rather than replacing it, so a caller can
-// prepend anything. Trusting the first entry is how spoofed addresses get into
-// logs; the last one is the address Caddy actually saw.
+// Caddy appends to X-Forwarded-For, so a caller can prepend anything.
+// Trusting the first entry is how spoofed addresses get into logs.
 func TestClientIPIgnoresSpoofedPrefix(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.9")
@@ -123,9 +122,8 @@ func TestRequestsInventsATraceAtTheEdge(t *testing.T) {
 	}
 }
 
-// The recorder wraps the ResponseWriter, and http.ResponseController can only
-// find Flush and SetWriteDeadline through Unwrap. Without it every event
-// stream dies the instant it tries to send.
+// ResponseController finds Flush only through Unwrap. Without it every event
+// stream dies on its first send.
 func TestRecorderStaysControllable(t *testing.T) {
 	var flushed bool
 
@@ -200,9 +198,8 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-// slog quotes values that need it, so a newline in a printed message cannot
-// close the line and forge another. Worth pinning: the message is attacker
-// controlled and goes straight into the log.
+// The message is attacker controlled and goes straight into the log, so a
+// newline in it must not be able to forge a second line.
 func TestMessagesCannotForgeALogLine(t *testing.T) {
 	var out bytes.Buffer
 

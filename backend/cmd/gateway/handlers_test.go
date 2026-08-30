@@ -198,10 +198,8 @@ func TestUpstreamStatusMapping(t *testing.T) {
 	}
 }
 
-// A rejection has to be answerable afterwards: what was refused, why, to
-// whom, and under which trace. That now takes two lines -- the handler
-// supplies the reason, the middleware supplies everything else -- so this
-// checks they are both there and share an id.
+// A rejection takes two lines now: the handler's reason and the middleware's
+// everything-else. Both must be there and share a trace.
 func TestRejectionsAreLogged(t *testing.T) {
 	var buf bytes.Buffer
 

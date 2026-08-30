@@ -13,22 +13,17 @@
     --ink: #2a2724;
     --ink-dim: #2a27248c;
     --ink-ghost: #2a27242e;
-    /* Paper width is derived from these two and nothing else: the base text
-       size and how many characters fit on a line. So scaling --font-size
-       scales the whole receipt in both directions -- these numbers are the
-       original clamp(19px, 3vw, 27px) multiplied by 1.15. */
+    /* Paper width derives from these two alone, so scaling --font-size scales
+       the whole receipt in both directions. */
     --font-size: clamp(22px, 3.45vw, 31px);
     --cols: 32;
-    /* TTL printers leave a small unprintable margin either side.
-       Horizontal is in ch so it scales with character width, vertical in em
-       so it scales with line height; both therefore track --font-size. */
+    /* The unprintable margin. ch horizontally and em vertically, so both
+       track --font-size. */
     --pad-x: 3ch;
     --pad-y: 0.85em;
 
-    /* Vertical gap between lines, as a multiple of the text size. The printer's
-       equivalent is ESC 3 n, which sets spacing in 0.125mm dots (default 30).
-       Enlarged lines take the tighter value: big text needs proportionally
-       less air between rows. */
+    /* Line spacing; the printer's equivalent is ESC 3 n. Big text takes the
+       tighter value, needing proportionally less air. */
     /* The receipt is a fixed size. This many lines of writing space, and when
        they are full they are full -- the paper does not grow. */
     --rows: 9;
@@ -41,9 +36,8 @@
        a warm white table reads as a hole punched in it, not a shadow. */
     --shade: 42 39 36;
 
-    /* One serration. viewBox + preserveAspectRatio='none' let the triangle
-       stretch to whatever mask-size asks for, so these two numbers alone
-       control the tear: width is the pitch, depth is how far it bites in. */
+    /* One serration, stretched by mask-size. Width is the pitch, depth is how
+       far it bites in. */
     --tooth-w: 7px;
     --tooth-d: 3.5px;
     --tooth-top: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2 1' preserveAspectRatio='none'%3E%3Cpath d='M0 1 H2 L1 0 Z' fill='%23000'/%3E%3C/svg%3E");
@@ -64,13 +58,8 @@
     background-attachment: fixed;
     color: var(--ink);
     font-family: 'VT323', ui-monospace, monospace;
-    /* `margin: auto` on the child rather than `align-items: center`: it centres
-       on both axes and still scrolls instead of clipping the top once the
-       receipt grows taller than the viewport.
-
-       The button is fixed and does not take part in that, which is what keeps
-       the receipt in the middle of the page rather than in the middle of
-       whatever is left over. */
+    /* `margin: auto` on the child, not `align-items`: it centres on both axes
+       and still scrolls rather than clipping a tall receipt. */
     display: flex;
     padding: 2.5rem 1rem;
     -webkit-font-smoothing: antialiased;
@@ -90,11 +79,8 @@
      so it traces the torn teeth instead of a rectangle. */
   .roll {
     position: relative;
-    /* An even shadow on all four sides: every layer has zero offset, so each
-       one radiates equally rather than being pushed downward. The four blurs
-       still stack from tight to wide, which is what keeps it reading as depth
-       instead of a flat halo -- but with no light direction, so the top edge
-       and the bottom edge get exactly the same shade. */
+    /* Zero offset on every layer, so the shadow radiates evenly with no light
+       direction. Four blurs, tight to wide, is what reads as depth. */
     filter:
       drop-shadow(0 0 calc(2px * var(--lift))  rgb(var(--shade) / 0.05))
       drop-shadow(0 0 calc(7px * var(--lift))  rgb(var(--shade) / 0.055))
@@ -103,19 +89,16 @@
   }
 
   .paper {
-    /* 1ch here is one character of the base font, because .paper is what sets
-       the base font-size; enlarged lines inside cannot widen the paper.
-       box-sizing: border-box means the content box stays exactly --cols wide. */
+    /* 1ch is one character of the base font set here, so enlarged lines inside
+       cannot widen the paper. */
     width: calc(var(--cols) * 1ch + var(--pad-x) * 2);
     background: var(--paper);
     font-size: var(--font-size);
     line-height: var(--line-height);
     padding: var(--pad-y) var(--pad-x);
 
-    /* Teeth are cut out of the paper by a mask rather than drawn by separate
-       strips, so there is no join to show through. Each SVG tile is exactly one
-       tooth and repeats at its natural size, never stretched, which is what
-       keeps every notch the full depth. */
+    /* Cut by a mask rather than drawn as strips, so there is no join. Each
+       tile is one tooth at its natural size, never stretched. */
     -webkit-mask-image: var(--tooth-top), var(--tooth-bot), linear-gradient(#000 0 0);
     -webkit-mask-size: var(--tooth-w) var(--tooth-d), var(--tooth-w) var(--tooth-d), 100% calc(100% - var(--tooth-d) * 2);
     -webkit-mask-position: 0 0, 0 100%, 0 var(--tooth-d);
@@ -148,17 +131,14 @@
     /* Anchors the hint, which is positioned rather than laid out. */
     position: relative;
   }
-  /* The hint has to match an empty line as the browser actually leaves it --
-     <div class="ln"><br></div> -- and a <br> child means the line is not
-     :empty. Matching only :empty is why this never once appeared. */
+  /* An empty line is <div class="ln"><br></div>, and a <br> child means it
+     is not :empty. Matching only :empty is why this never appeared. */
   .body:empty::before,
   .body:has(> .ln:only-child:empty)::before,
   .body:has(> .ln:only-child > br:only-child)::before {
     content: 'start typing';
-    /* Positioned, not laid out. In flow these pseudo-elements sit either side
-       of the line div and each takes a row of its own, which pushes the caret
-       down the page. Overlaying the first line leaves the caret where the
-       reader is about to type. */
+    /* Positioned, not laid out: in flow these sit either side of the line div
+       and each takes a row, pushing the caret down the page. */
     position: absolute;
     left: 0;
     top: 0;
@@ -166,10 +146,8 @@
     pointer-events: none;
   }
 
-  /* The dots animate by revealing one character at a time. A width step
-     rather than swapping `content`, because content is not reliably
-     animatable -- and steps(), like everything else here, because a smooth
-     fade would look like a web app instead of a machine waiting. */
+  /* One character revealed at a time by stepping the width, because
+     `content` is not reliably animatable. */
   .body:empty::after,
   .body:has(> .ln:only-child:empty)::after,
   .body:has(> .ln:only-child > br:only-child)::after {
@@ -227,9 +205,8 @@
     display: flex;
     justify-content: center;
     padding: 1.6rem 1rem;
-    /* The bar spans the page so the button can centre in it, but only the
-       button should be clickable -- otherwise this catches clicks meant for
-       the paper above it. */
+    /* Spans the page so the button can centre, but must not catch clicks
+       meant for the paper above it. */
     pointer-events: none;
   }
 
@@ -261,10 +238,8 @@
 
   .status.bad { color: #a33; }
 
-  /* The front panel. Monochrome on purpose: a receipt printer has one colour
-     of ink, and a green LED here would be the one thing on the page that
-     could not have come out of the machine. Lit is a filled dot and full
-     ink; dark is a hollow one, faded. */
+  /* Monochrome on purpose: a green LED would be the one thing here that
+     could not have come out of the machine. */
   .lamps {
     display: flex;
     gap: clamp(20px, 3.4vw, 40px);
@@ -290,22 +265,14 @@
     content: "\25CF";            /* filled circle */
   }
 
-  /* BUSY is the only one that means "right now", so it is the only one that
-     moves. Stepped, like everything else here -- a fade would look like a
-     web app rather than a panel lamp. */
+  /* BUSY is the only lamp that means "right now", so the only one that
+     moves. Stepped, because a fade would read as a web app. */
   .lamp.blink { animation: blink 1s steps(2, end) infinite; }
 
   @keyframes blink { 50% { opacity: 0.25; } }
 
-  /* The paper leaves upward and fresh paper arrives behind it.
-     
-     Smooth, not stepped. Stepping was stylisation rather than realism: a real
-     stepper advances a couple of hundred microsteps per printed row, far below
-     anything the eye resolves, so the discreteness only ever read as stutter.
-     
-     translate3d rather than translateY so the move is unambiguously a
-     compositor job -- see the willChange dance in app.js for why that matters
-     on an element carrying four drop-shadows. */
+  /* Smooth, not stepped: a real stepper advances hundreds of microsteps per
+     row, so the discreteness only ever read as stutter. */
   @keyframes feed-out { to { transform: translate3d(0, -118vh, 0); } }
   @keyframes feed-in { from { transform: translate3d(0, -42vh, 0); } }
 

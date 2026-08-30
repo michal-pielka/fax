@@ -1,12 +1,5 @@
-// Package sse writes and reads Server-Sent Events.
-//
-// Both services need it and for opposite reasons: the dispatcher streams state
-// changes to the gateway, and the gateway streams them on to browsers. The
-// gateway is therefore a reader of one stream and the writer of many.
-//
-// This is the whole protocol as far as we use it: a message is one or more
-// "data:" lines followed by a blank one, and a line starting with a colon is a
-// comment nobody sees.
+// Package sse writes and reads Server-Sent Events: "data:" lines ended by a
+// blank one, and ":" lines as comments nobody sees.
 package sse
 
 import (
@@ -25,25 +18,20 @@ type Writer struct {
 	rc *http.ResponseController
 }
 
-// Start sends the headers and takes the response out of the server's write
-// deadline. That last part is not optional: WriteTimeout covers a whole
-// response, and a stream is a single response that never ends -- without this
-// every stream dies exactly WriteTimeout after it opens, which looks like
-// everything working perfectly for forty seconds.
+// Start sends the headers and clears the write deadline. Not optional:
+// WriteTimeout covers a whole response, and a stream never ends.
 func Start(w http.ResponseWriter) (*Writer, error) {
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Connection", "keep-alive")
-	// Caddy does not buffer streaming responses, so this changes nothing
-	// today. It is here for the day something else is in front.
+	// Insurance for the day something other than Caddy is in front.
 	h.Set("X-Accel-Buffering", "no")
 
 	rc := http.NewResponseController(w)
 
-	// ErrNotSupported is tolerated rather than fatal: a writer without a
-	// deadline to clear has no deadline to die of either, which is what a test
-	// recorder and some middleware look like. Any other failure is real.
+	// ErrNotSupported is fine: no deadline to clear means none to die of.
+	// Any other failure is real.
 	if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		return nil, fmt.Errorf("clear write deadline: %w", err)
 	}
@@ -87,11 +75,8 @@ func (s *Writer) flush() error {
 	return s.rc.Flush()
 }
 
-// Read calls onData with the payload of every event on the stream, and returns
-// when the stream ends or onData fails.
-//
-// Comments and field names other than "data" are skipped: we produce both ends
-// of this, so the full grammar would be code that never runs.
+// Read calls onData for every event, returning when the stream ends or onData
+// fails. Only "data" is parsed: we write both ends of this.
 func Read(r io.Reader, onData func([]byte) error) error {
 	sc := bufio.NewScanner(r)
 	// A state event is well under a hundred bytes. Anything approaching this

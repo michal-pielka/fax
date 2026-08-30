@@ -90,9 +90,7 @@ func TestPrintPublishes(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// "accepted", never "printed": at this point the broker has the job and
-	// the printer is claimed, and nothing has touched paper. The outcome
-	// arrives later, on the event stream, tagged with this id.
+	// "accepted", never "printed": nothing has touched paper yet.
 	if out["status"] != "accepted" {
 		t.Errorf("status = %q, want accepted", out["status"])
 	}
@@ -167,9 +165,8 @@ func TestState(t *testing.T) {
 	}
 }
 
-// An offline printer is a normal condition, not an unhealthy dispatcher.
-// Conflating them would have an orchestrator restarting this process every
-// time the roll ran out.
+// An offline printer is normal, not an unhealthy dispatcher. Conflating them
+// restarts this process every time the roll runs out.
 func TestHealthIgnoresPrinterState(t *testing.T) {
 	rec := do(t, &fakePrinter{state: State{}}, http.MethodGet, "/internal/health", "")
 

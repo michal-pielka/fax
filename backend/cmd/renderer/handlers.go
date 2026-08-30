@@ -11,9 +11,8 @@ import (
 	"github.com/michal-pielka/fax/server/internal/render"
 )
 
-// maxBody caps the request body before the JSON decoder sees it. Validate
-// protects against a large document; only this protects against a body that
-// never stops arriving.
+// maxBody caps the body before the decoder sees it. Validate stops a large
+// document; only this stops one that never stops arriving.
 const maxBody = 64 << 10 // 64 KiB
 
 type api struct {
@@ -33,9 +32,8 @@ func (a *api) routes() *http.ServeMux {
 }
 
 type renderResponse struct {
-	// Payload is the ESC/POS byte stream. encoding/json base64s a []byte, so
-	// it survives the trip intact -- these bytes are not valid UTF-8, and a
-	// string field would have replaced the high ones with U+FFFD.
+	// []byte so encoding/json base64s it: ESC/POS is not valid UTF-8, and a
+	// string field would replace the high bytes with U+FFFD.
 	Payload []byte `json:"payload"`
 }
 
@@ -64,9 +62,8 @@ func (a *api) render(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := render.Render(d)
-	// Debug: the request line above already reports that this happened, how
-	// long it took and how big the answer was. All this adds is the shape of
-	// the document, which matters when a receipt comes out looking wrong.
+	// Debug: the request line already covers timing and size. This adds the
+	// document's shape, which matters when a receipt looks wrong.
 	a.log.DebugContext(r.Context(), "rendered",
 		"chars", utf8.RuneCountInString(d.Text),
 		"spans", len(d.Spans),

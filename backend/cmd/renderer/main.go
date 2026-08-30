@@ -1,8 +1,5 @@
-// Command renderer is the service that turns documents into printer bytes.
-//
-// It is a thin shell around internal/render: decode, validate, render, encode.
-// All the logic lives in that package, which is why the package has thorough
-// tests and this command has few.
+// Command renderer turns documents into printer bytes: a thin shell around
+// internal/render, which is where the logic and the thorough tests live.
 package main
 
 import (
@@ -20,9 +17,8 @@ import (
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
-// maxRunes has to match the gateway's limit. The renderer repeats the check
-// rather than trusting it: this is a separate process, and Render's assumption
-// that byte offsets equal character positions only holds for validated text.
+// maxRunes matches the gateway's, checked again rather than trusted: Render
+// assumes byte offsets are character positions, which holds only if validated.
 const maxRunes = 255
 
 func main() {
@@ -44,9 +40,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr: *addr,
-		// Every request gets a trace id here, and one line when it
-		// finishes. Outermost, so even a request that never reaches a
-		// handler is still accounted for.
+		// Outermost, so a request that never reaches a handler is still logged.
 		Handler: logging.Requests(log)(a.routes()),
 		// Shorter than the gateway's: rendering is pure computation with no
 		// hardware to wait on, so nothing here should take seconds.

@@ -1,13 +1,5 @@
-# One door into the whole stack: Caddy on 80/443.
-#
-#   /        the site
-#   /api/*   the gateway
-#   /mqtt    the broker, over websockets
-#
-# Nothing else publishes a port. The gateway, renderer, dispatcher and
-# mosquitto talk over the internal compose network and are unreachable from
-# outside -- which is what makes the /internal/* paths safe to leave
-# unauthenticated, and what keeps TLS entirely Caddy's problem.
+# One door: Caddy on 80/443, routing / to the site, /api/* to the gateway and
+# /mqtt to the broker. Nothing else publishes a port, so /internal/* is safe.
 
 name: fax
 
@@ -15,10 +7,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    # Docker's default json-file driver never rotates. Every line any of these
-    # services has ever logged stays on disk until the disk is full, and a full
-    # disk takes the whole stack down -- including Caddy, so the site goes with
-    # it. 30 MB per service is months of history here and cannot run away.
+    # json-file never rotates by default, and a full disk takes Caddy down
+    # with everything else. 30 MB per service is months of history here.
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
@@ -73,10 +63,8 @@ services:
       - "-device=${DEVICE_ID:-printer-1}"
     environment:
       MQTT_PASSWORD: "${MQTT_PASSWORD:?set MQTT_PASSWORD in .env}"
-    # The dispatcher exits if it cannot reach the broker at startup, which is
-    # deliberate -- it has no purpose without one. depends_on only orders
-    # container starts, not readiness, so the restart policy is what actually
-    # covers the second or two before mosquitto is listening.
+    # depends_on orders starts, not readiness. The restart policy is what
+    # covers the second before mosquitto is listening.
     depends_on: [mosquitto]
 
   mosquitto:
@@ -85,9 +73,8 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
-    # No published ports, deliberately. Both listeners are reachable only
-    # from inside this network: 1883 for the dispatcher, 9001 for Caddy.
-    # The broker has no door of its own onto the internet.
+    # No published ports: 1883 for the dispatcher and 9001 for Caddy are
+    # reachable only from inside this network.
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./deploy/mosquitto/acl:/mosquitto/config/acl:ro

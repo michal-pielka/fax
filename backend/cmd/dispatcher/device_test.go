@@ -22,8 +22,7 @@ func TestNewTopics(t *testing.T) {
 	}
 }
 
-// Until the device says otherwise, nothing can be printed. Defaulting to
-// "online" would have the gateway cheerfully accepting jobs into the void
+// Defaulting to online would have the gateway accepting jobs into the void
 // every time the dispatcher restarted.
 func TestZeroStateIsUnprintable(t *testing.T) {
 	var s State
@@ -144,9 +143,7 @@ func TestSubscribeSignalsOnEveryChange(t *testing.T) {
 	}
 }
 
-// A burst has to collapse into one wake-up. The subscriber reads the current
-// state after waking, so replaying every intermediate value would only deliver
-// answers that are already wrong -- and a full channel must never block
+// A burst must collapse into one wake-up, and a full channel must never block
 // notify, which runs on paho's single message goroutine.
 func TestNotifyCoalescesAndNeverBlocks(t *testing.T) {
 	d := newWaiting()

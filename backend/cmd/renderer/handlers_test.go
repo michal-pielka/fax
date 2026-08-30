@@ -41,11 +41,8 @@ func TestRenderEndpoint(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// What the bytes mean is internal/render's business and is tested there.
-	// This checks the two things the HTTP layer is responsible for: that the
-	// document reached the renderer, and that the bytes survived JSON intact.
-	// They are not valid UTF-8, so a string-typed field would have replaced
-	// the high ones with U+FFFD along the way.
+	// What the bytes mean is internal/render's business. This checks only that
+	// the document arrived and that non-UTF-8 bytes survived JSON intact.
 	if !bytes.HasPrefix(out.Payload, []byte{0x1b, '@'}) {
 		t.Errorf("payload does not begin with ESC @: %q", out.Payload)
 	}

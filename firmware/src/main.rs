@@ -1,9 +1,5 @@
-//! Fax printer firmware.
-//!
-//! Subscribes to an MQTT topic and writes whatever arrives straight out of a
-//! UART into the thermal printer. The payload is already finished ESC/POS --
-//! the server renders it -- so there is no printer command knowledge here.
-//! This is a byte pump.
+//! Fax printer firmware: subscribe to a topic, write what arrives straight out
+//! of a UART. The server renders the ESC/POS, so this is a byte pump.
 
 mod config;
 mod mqtt;
@@ -53,9 +49,8 @@ fn main() -> Result<(), EspError> {
         config::WIFI_PASS,
     )?;
 
-    // Before MQTT, not after: TLS checks certificate dates and this board has
-    // no battery-backed clock, so an unsynced device fails every handshake.
-    // Kept alive so the clock keeps being corrected.
+    // Before MQTT: TLS checks certificate dates and this board has no clock.
+    // Kept alive so it stays corrected.
     let _sntp = time::sync_blocking(std::time::Duration::from_secs(15))?;
 
     let (mut client, events) = mqtt::connect()?;
@@ -64,11 +59,8 @@ fn main() -> Result<(), EspError> {
     // answers behaves exactly as it did before any of this existed.
     let mut paper = true;
 
-    // All client and printer work happens on this thread. Doing any of it in
-    // the MQTT callback deadlocks -- see mqtt.rs.
-    //
-    // recv_timeout rather than a plain receive: the timeout is the only thing
-    // that runs on an idle device, and it is where the paper poll lives.
+    // All client and printer work happens here; doing it in the callback
+    // deadlocks (see mqtt.rs). The timeout is where the paper poll lives.
     loop {
         match events.recv_timeout(config::PAPER_POLL) {
             Ok(Event::Connected) => {
@@ -76,9 +68,8 @@ fn main() -> Result<(), EspError> {
 
                 client.subscribe(config::JOB_TOPIC, QoS::AtLeastOnce)?;
 
-                // Measured before announcing: publishing a guess and correcting
-                // it a moment later is how the gateway ends up rejecting a job
-                // that would have printed fine.
+                // Measured before announcing: a guess corrected a moment later
+                // is how the gateway rejects a job that would have printed.
                 paper = printer::has_paper(&uart).unwrap_or_else(|| {
                     log::warn!("printer will not report paper -- assuming loaded");
                     true
@@ -89,9 +80,8 @@ fn main() -> Result<(), EspError> {
             }
 
             Ok(Event::Job { id, payload }) => {
-                // Refuse rather than blast bytes at a dead engine. The gateway
-                // should have caught this, but its view of the paper is a
-                // cached value that can be seconds stale -- ours is not.
+                // Refuse rather than blast bytes at a dead engine: the
+                // gateway's view of the paper can be seconds stale.
                 if !paper {
                     log::warn!("job {id} refused, no paper");
                     ack(&mut client, &id, config::ACK_NO_PAPER)?;
@@ -101,8 +91,7 @@ fn main() -> Result<(), EspError> {
                 log::info!("printing {} bytes for {id}", payload.len());
                 printer::write(&uart, &payload)?;
 
-                // Blocks until the printer has worked through the job. One
-                // reply, two answers: it finished, and this is the paper
+                // One reply, two answers: it finished, and this is the paper
                 // afterwards.
                 match printer::wait_done(&uart, config::PRINT_TIMEOUT) {
                     Some(now) => {
@@ -112,9 +101,7 @@ fn main() -> Result<(), EspError> {
                     }
 
                     None => {
-                        // Silence here means the job may well have printed --
-                        // we simply cannot say so. Claiming success would be
-                        // the lie this whole exchange exists to remove.
+                        // It may well have printed; we cannot say so.
                         log::warn!("no confirmation for {id}");
                         ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
                     }
@@ -163,10 +150,8 @@ fn poll_paper(
     set_paper(client, now, known)
 }
 
-/// Publish a paper *change*, so the two things that measure it cannot
-/// disagree. Only on a change: a retained publish every five seconds is noise
-/// the broker keeps forever. The connect arm publishes unconditionally instead,
-/// because a fresh session needs the retained message refreshed either way.
+/// Publish a paper *change* only: a retained publish every five seconds is
+/// noise the broker keeps forever. The connect arm publishes unconditionally.
 fn set_paper(client: &mut EspMqttClient<'_>, now: bool, known: &mut bool) -> Result<(), EspError> {
     if now == *known {
         return Ok(());

@@ -25,11 +25,8 @@ type Dispatcher interface {
 	Events(ctx context.Context) (io.ReadCloser, error)
 }
 
-// These three shapes must match what the renderer and dispatcher declare in
-// their own packages. They are repeated rather than shared because extracting
-// an internal/wire package is a refactor of all three services, not part of
-// wiring this one. DisallowUnknownFields on the receiving side turns a drift
-// into a loud 400 rather than a silently dropped field.
+// Repeated rather than shared with the other services. DisallowUnknownFields
+// on the receiving side turns any drift into a loud 400.
 type renderResponse struct {
 	Payload []byte `json:"payload"`
 }
@@ -39,12 +36,8 @@ type printRequest struct {
 	Payload []byte `json:"payload"`
 }
 
-// State mirrors the dispatcher's. The zero value is offline, with no paper and
-// nothing printing, so a decode that yields nothing reports the safe answer.
-//
-// Last is how the most recent job ended. It rides along because a print is
-// fire-and-forget now: the 202 says the job was accepted, and this is the only
-// thing that ever says whether it came out.
+// State mirrors the dispatcher's; the zero value is the safe answer. Last is
+// the only thing that ever says whether a fire-and-forget print came out.
 type State struct {
 	Online bool    `json:"online"`
 	Paper  bool    `json:"paper"`
@@ -58,9 +51,8 @@ type Result struct {
 	Error string `json:"error,omitempty"`
 }
 
-// upstreamError keeps the status an internal service replied with. Some of
-// those statuses describe the printer rather than a failure, so flattening
-// them all into 502 would discard the only information the caller wants.
+// upstreamError keeps the status an internal service replied with: some
+// describe the printer, and 502 would discard the only useful information.
 type upstreamError struct {
 	Service string
 	Status  int
@@ -91,9 +83,7 @@ func (c *jsonClient) get(ctx context.Context, path string, out any) error {
 }
 
 func (c *jsonClient) do(ctx context.Context, method, path string, body io.Reader, out any) error {
-	// The context comes from the inbound handler, so a browser tab that closes
-	// mid-print unwinds the whole chain instead of leaving the dispatcher
-	// waiting on a broker for a reply nobody will read.
+	// The inbound handler's context, so a closed tab unwinds the whole chain.
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
 		return err
@@ -148,9 +138,8 @@ func (c *rendererClient) Render(ctx context.Context, d doc.Document) ([]byte, er
 
 type dispatcherClient struct {
 	jsonClient
-	// A second client, with no timeout at all. http.Client.Timeout covers
-	// reading the response body, and the whole point of a stream is that the
-	// body never ends -- the request context is what closes it instead.
+	// No timeout: Client.Timeout covers reading the body, and a stream's body
+	// never ends. The request context closes it instead.
 	stream *http.Client
 }
 

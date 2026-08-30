@@ -1,10 +1,5 @@
-//! The thermal printer, over UART.
-//!
-//! Almost no ESC/POS knowledge lives here. The server renders the command bytes and
-//! this writes them out unchanged, which is what keeps new formatting features
-//! from needing a reflash. The exception is the paper query at the bottom:
-//! it is a question rather than a document, and only the thing holding the
-//! UART can hear the answer.
+//! The thermal printer, over UART. The server renders the commands, so new
+//! formatting needs no reflash. The exception is the status queries below.
 
 use std::time::Duration;
 
@@ -14,18 +9,8 @@ use esp_idf_svc::hal::uart::{config::Config as UartConfig, Uart, UartDriver};
 use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::sys::EspError;
 
-/// Wiring, from the printer's 5-pin TTL header:
-///
-///   pin 1 NC
-///   pin 2 TX  (printer out) -> GPIO16
-///   pin 3 RX  (printer in)  <- GPIO17
-///   pin 4 DTR (printer out) -> GPIO23, unused
-///   pin 5 GND
-///
-/// DTR is the busy line. Measured, it does not track the paper -- low with the
-/// roll in and low with it out -- so has_paper asks the printer instead.
-///
-/// UART0 is the USB console, so the printer gets UART1.
+/// The 5-pin TTL header: 1 NC, 2 TX -> GPIO16, 3 RX <- GPIO17, 4 DTR ->
+/// GPIO23 (measured; does not track paper), 5 GND. UART0 is the USB console.
 pub fn open<'d, U: Uart + 'd>(
     uart: U,
     tx: impl OutputPin + 'd,
@@ -50,23 +35,15 @@ pub fn write(uart: &UartDriver, data: &[u8]) -> Result<(), EspError> {
         sent += uart.write(&data[sent..])?;
     }
 
-    // ESP-IDF buffers transmits and returns before the bytes reach the wire.
-    // Without this we would report a receipt printed while it was still
-    // sitting in a driver buffer.
+    // ESP-IDF returns before the bytes reach the wire, so without this we
+    // report a receipt printed from inside a driver buffer.
     uart.wait_tx_done(BLOCK)
 }
 
-/// Ask the printer whether it has paper.
-///
-/// `None` means it did not answer, which is not the same as "no paper":
-/// treating silence as empty would refuse every job the moment the return path
-/// hiccups, so the caller keeps its last answer instead.
-///
-/// DLE EOT 4 is a real-time command -- the printer replies from an interrupt
-/// rather than from behind the print queue -- so this is safe to ask mid-job.
+/// Ask whether the printer has paper. `None` is "did not answer", not "no
+/// paper". DLE EOT 4 is real-time, so it is safe to ask mid-job.
 pub fn has_paper(uart: &UartDriver) -> Option<bool> {
-    // Anything already buffered arrived unprompted, and would be read as the
-    // reply to this query.
+    // Anything already buffered would be read as this query's reply.
     uart.clear_rx().ok()?;
     write(uart, &[0x10, 0x04, 0x04]).ok()?;
 
@@ -93,20 +70,8 @@ pub fn has_paper(uart: &UartDriver) -> Option<bool> {
     Some(status & 0b0110_0000 == 0)
 }
 
-/// Wait for the printer to finish, and learn about the paper on the way.
-///
-/// The trick is that GS r is *not* real-time: the printer executes it in the
-/// order it comes out of the receive buffer, so its reply cannot arrive until
-/// everything queued ahead of it has been printed. Sent straight after a job,
-/// the reply is the completion signal.
-///
-/// That is the whole difference from has_paper, which uses DLE EOT 4 -- a
-/// real-time command that answers immediately and would tell us nothing about
-/// whether the job is done.
-///
-/// `Some(paper)` means the job finished and this is the state of the roll
-/// afterwards. `None` means the printer never came back: out of paper mid-job,
-/// jammed, or not listening.
+/// Wait for the printer to finish, learning the paper state on the way.
+/// `None` means it never came back: out of paper mid-job, jammed, or silent.
 pub fn wait_done(uart: &UartDriver, timeout: Duration) -> Option<bool> {
     write(uart, &[0x1D, 0x72, 0x01]).ok()?;
 
@@ -124,9 +89,8 @@ pub fn wait_done(uart: &UartDriver, timeout: Duration) -> Option<bool> {
 
     let status = buf[0];
 
-    // GS r has no fixed bits to check, so this is the weaker sanity test: only
-    // the low nibble is defined, and the two values this printer produces are
-    // 0x00 with paper and 0x0c without.
+    // GS r has no fixed bits, so this is weak: only the low nibble is
+    // defined, and this printer answers 0x00 with paper and 0x0c without.
     if status & 0b1111_0000 != 0 {
         log::warn!("printer answered {status:#04x}, not a paper status");
         return None;

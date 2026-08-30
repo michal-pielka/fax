@@ -13,9 +13,8 @@ import (
 	"github.com/michal-pielka/fax/server/internal/sse"
 )
 
-// maxBody caps the request body before the JSON decoder sees it. Validate
-// protects against a large document; only this protects against a body that
-// never stops arriving.
+// maxBody caps the body before the decoder sees it. Validate stops a large
+// document; only this stops one that never stops arriving.
 const maxBody = 64 << 10 // 64 KiB
 
 type api struct {
@@ -70,10 +69,8 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The trace id is the job id. One value covers the HTTP request, both
-	// internal calls, the MQTT topic, the firmware's own logs and the ack that
-	// comes back -- so a single grep follows one receipt across four processes.
-	// Still stored nowhere: it lives as long as the request does.
+	// The trace id is the job id, so one grep follows a receipt from here to
+	// the firmware. Stored nowhere: it lives as long as the request.
 	id := logging.Trace(r.Context())
 
 	if err := a.dispatcher.Print(r.Context(), id, payload); err != nil {
@@ -81,28 +78,16 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The message itself is logged, deliberately.
-	//
-	// It looks like a privacy decision and mostly is not: the entire purpose
-	// of this endpoint is to print the text onto paper in a flat where it will
-	// be read. Logging adds no exposure the printing did not already create.
-	//
-	// What it does add is persistence -- 30MB of rotated logs rather than a
-	// receipt that gets thrown away -- and that is the actual trade. It is
-	// worth it because a public endpoint that prints into someone's home needs
-	// an answer to "what did they send", and there is no other record.
-	//
-	// Truncated because the rune limit could be raised later, and quoted by
-	// both handlers, so a newline in the message cannot forge a log line.
+	// The message is logged on purpose: it is about to be printed and read
+	// anyway, and nothing else records what a stranger sent.
 	a.log.InfoContext(r.Context(), "print accepted",
 		"chars", utf8.RuneCountInString(d.Text),
 		"bytes", len(payload),
 		"text", logging.Truncate(d.Text, 512),
 	)
 
-	// 202: the printer has been claimed and the job is on its way, which is
-	// everything that can honestly be said this early. Whether it came out
-	// arrives on /api/events tagged with this id -- keep it.
+	// 202, not 200: the job is on its way. Whether it came out arrives on
+	// /api/events tagged with this id.
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": id, "status": "accepted"})
 }
 
@@ -116,17 +101,12 @@ func (a *api) state(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-// eventHeartbeat is how often a silent stream sends a comment, so that phone
-// radios and NAT tables do not reap a connection for being quiet.
+// eventHeartbeat keeps a quiet stream from being reaped by a phone radio or a
+// NAT table.
 const eventHeartbeat = 20 * time.Second
 
-// events streams the printer's state to a browser for as long as the tab is
-// open.
-//
-// The chain behind it never polls: the firmware publishes a change, the
-// dispatcher notices in its MQTT callback, the gateway is already holding a
-// stream open to hear about it, and this pushes it out. A lamp changes because
-// something happened, not because a timer went off.
+// events streams printer state to a browser for as long as the tab is open.
+// Nothing on the chain behind it polls.
 func (a *api) events(w http.ResponseWriter, r *http.Request) {
 	changes, current, unsubscribe, ok := a.hub.subscribe()
 	if !ok {
@@ -176,15 +156,8 @@ func (a *api) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// passThrough lists the statuses an internal service is trusted to have chosen
-// deliberately -- they describe the printer or the request, not a fault:
-//
-//	400 the renderer rejected the document
-//	409 out of paper, or already printing something else
-//	503 printer offline, or the broker is unreachable
-//
-// Anything else means that service is itself broken, which is a 502: the
-// caller did nothing wrong, and the same request may well work later.
+// passThrough are statuses an internal service chose deliberately: 400 bad
+// document, 409 no paper or busy, 503 offline. Anything else is a 502.
 var passThrough = map[int]bool{
 	http.StatusBadRequest:         true,
 	http.StatusConflict:           true,
@@ -209,32 +182,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// fail writes an error response and records it.
-//
-// Rejections used to be silent, which left the two questions you actually have
-// about a public endpoint unanswerable: what are people sending that gets
-// turned away, and how often is the printer unreachable.
-//
-// 4xx is the caller's fault and routine, so it warns; 5xx is ours and errors.
+// fail writes an error response and records it. 4xx is the caller's fault and
+// routine, so it warns; 5xx is ours and errors.
 func (a *api) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {
 	level := slog.LevelWarn
 	if code >= http.StatusInternalServerError {
 		level = slog.LevelError
 	}
 
-	// Status, path, caller and duration all arrive on the request line the
-	// middleware writes; this only has to add the reason.
+	// The middleware's request line carries everything but the reason.
 	a.log.Log(r.Context(), level, "rejected", "reason", msg)
 
 	writeJSON(w, code, map[string]string{"error": msg})
 }
-
-// clientIP is the address the request actually came from.
-//
-// Caddy sits in front, so RemoteAddr is always Caddy. Caddy *appends* to
-// X-Forwarded-For rather than replacing it, which means a caller can prepend
-// whatever they like -- a client sending "X-Forwarded-For: 1.2.3.4" arrives
-// here as "1.2.3.4, <their real address>".
-//
-// So the last entry is the trustworthy one, and the widespread habit of taking
-// the first is how spoofed addresses end up in logs and rate limiters.

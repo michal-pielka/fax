@@ -11,24 +11,17 @@ import (
 )
 
 const (
-	// maxStreams caps concurrent browser streams. Each one is a held
-	// connection and a goroutine on a public endpoint with no rate limiting,
-	// which makes it the cheapest way to exhaust this box -- cheaper than
-	// printing, since printing at least needs the printer to cooperate.
+	// A held connection and a goroutine each, on an endpoint with no rate
+	// limiting: the cheapest way to exhaust this box.
 	maxStreams = 64
 
-	// Reconnect delay when the dispatcher's stream drops. Doubles up to the
-	// maximum, so a dispatcher that is down for an hour is not hammered.
+	// Doubles up to the maximum, so an hour of downtime is not hammered.
 	minBackoff = 500 * time.Millisecond
 	maxBackoff = 15 * time.Second
 )
 
-// hub holds one stream open to the dispatcher and fans what arrives on it out
-// to every browser watching.
-//
-// Nothing polls. The dispatcher knows the instant anything changes and says
-// so; this is the only place that knowledge has to be copied, and it is copied
-// once per change rather than once per client per second.
+// hub holds one stream open to the dispatcher and fans it out to every
+// browser. Nothing polls: state is copied once per change, not per client.
 type hub struct {
 	dispatcher Dispatcher
 	log        *slog.Logger
@@ -70,9 +63,8 @@ func (h *hub) unsubscribe(ch chan State) {
 	delete(h.clients, ch)
 }
 
-// broadcast records the new state and pushes it to everyone. A client whose
-// buffer is full is skipped rather than waited for: it already has an unread
-// state, and the one it is about to read is newer than the one it missed.
+// broadcast pushes to everyone, skipping a client whose buffer is full: what
+// it is about to read is newer than what it missed.
 func (h *hub) broadcast(s State) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -102,13 +94,11 @@ func (h *hub) run(ctx context.Context) {
 			h.log.Warn("dispatcher event stream ended", "err", err)
 		}
 
-		// Nothing is feeding the lamps now, so say so. The zero State is
-		// offline with no paper, which is the honest answer while blind --
-		// leaving the last known state on screen would be a guess.
+		// Blind now, so say so. The zero State is offline with no paper;
+		// leaving the last one on screen would be a guess.
 		h.broadcast(State{})
 
-		// A stream that carried something was a real connection, so the next
-		// failure starts its backoff over.
+		// A stream that carried something was real, so reset the backoff.
 		if delivered {
 			backoff = minBackoff
 		}

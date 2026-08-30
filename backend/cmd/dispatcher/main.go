@@ -1,8 +1,5 @@
-// Command dispatcher owns the MQTT connection to the printer.
-//
-// It is the only process allowed to publish jobs, and must run as a single
-// instance: two of them would each publish every job, and the printer would
-// produce two receipts.
+// Command dispatcher owns the MQTT connection and is the only process allowed
+// to publish jobs. Two instances would print every receipt twice.
 package main
 
 import (
@@ -56,9 +53,8 @@ func main() {
 	connectCtx, cancelConnect := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancelConnect()
 
-	// Failing to connect at startup is fatal rather than retried in the
-	// background: a dispatcher that cannot reach its broker has no purpose,
-	// and dying loudly beats silently accepting jobs that go nowhere.
+	// Fatal rather than retried: dying loudly beats silently accepting jobs
+	// that go nowhere.
 	if err := dev.Connect(connectCtx); err != nil {
 		log.Error("cannot connect to broker", "broker", *broker, "err", err)
 		os.Exit(1)
@@ -74,10 +70,8 @@ func main() {
 		Handler:           logging.Requests(log)(a.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Ordinary again. Waiting for the acknowledgement moved off the
-		// request and into a goroutine, so no handler here outlives a publish.
-		// The event stream is exempt regardless: sse.Start clears the deadline
-		// on that response.
+		// No handler outlives a publish now. Event streams are exempt anyway:
+		// sse.Start clears their deadline.
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}

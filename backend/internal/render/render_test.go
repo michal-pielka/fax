@@ -13,9 +13,8 @@ func cat(parts ...[]byte) []byte {
 	return bytes.Join(parts, nil)
 }
 
-// body returns just the part of a rendered receipt between the two dividers,
-// so the golden tests below assert on what the sender wrote rather than on the
-// frame around it.
+// body is the part between the dividers, so the golden tests assert on what
+// the sender wrote rather than on the frame.
 func body(t *testing.T, out []byte) []byte {
 	t.Helper()
 
@@ -83,9 +82,8 @@ func TestRender(t *testing.T) {
 			want: cat(boldOn, underlineOn, text("x"), boldOff, underlineOff),
 		},
 		{
-			// The case that breaks a boundary-walking implementation: it would
-			// switch bold off at offset 3 where the first span ends, even
-			// though the second still wants it on.
+			// Breaks a boundary-walking implementation: it would switch bold
+			// off where the first span ends, while the second still wants it.
 			name: "overlapping spans do not switch off at the join",
 			in:   doc.Document{Text: "abcdef", Spans: []doc.Span{bold(0, 3), bold(2, 5)}},
 			want: cat(boldOn, text("abcde"), boldOff, text("f")),
@@ -167,9 +165,8 @@ func TestTextSurvivesUnaltered(t *testing.T) {
 	}
 }
 
-// stripCommands removes the ESC sequences this package emits, leaving only
-// what lands on paper. ESC @ is two bytes; the rest take a parameter and are
-// three.
+// stripCommands leaves only what lands on paper. ESC @ is two bytes; the rest
+// take a parameter and are three.
 func stripCommands(b []byte) []byte {
 	var out []byte
 

@@ -6,11 +6,8 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::EspError;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 
-/// Connects and returns the guard.
-///
-/// The caller must keep the returned value alive: dropping it powers down the
-/// radio, and MQTT then fails with a DNS error that mentions nothing about
-/// WiFi.
+/// Connects and returns the guard. Keep it alive: dropping it powers down the
+/// radio, and MQTT then fails with a DNS error that never mentions WiFi.
 pub fn connect<'d, M: WifiModemPeripheral + 'd>(
     modem: M,
     sysloop: EspSystemEventLoop,

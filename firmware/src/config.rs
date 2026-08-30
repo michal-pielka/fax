@@ -1,40 +1,25 @@
-//! Everything you would change without changing behaviour.
-//!
-//! Credentials are baked in at build time, so a missing one is a compile
-//! error rather than firmware that silently ships without them:
-//!
-//!   WIFI_SSID=... WIFI_PASS=... MQTT_PASS=... cargo run --release
-//!
-//! The broker address is not among them -- it is fixed infrastructure, not a
-//! secret, so it is a constant below and cannot be flashed wrong.
+//! Everything you would change without changing behaviour. Credentials are
+//! baked in via env!, so a missing one is a compile error rather than a bad flash.
 
 use std::time::Duration;
 
 pub const WIFI_SSID: &str = env!("WIFI_SSID");
 pub const WIFI_PASS: &str = env!("WIFI_PASS");
 
-/// Websockets, not plain MQTT, and behind Caddy on 443 rather than a broker
-/// port of its own. Caddy is an HTTP proxy and cannot route plain MQTT, so
-/// this is what lets the broker sit behind the one ingress -- and it makes the
-/// certificate Caddy's problem rather than something to share between
-/// containers and renew every ninety days.
-///
-/// A hostname rather than an IP on purpose: moving the VPS is then a DNS
-/// change instead of a USB cable and a reflash.
+/// Websockets, because Caddy cannot proxy plain MQTT and this keeps the
+/// certificate its problem. A hostname, so moving the VPS is not a reflash.
 pub const MQTT_URL: &str = "wss://fax.pielka.sh/mqtt";
 pub const MQTT_PASS: &str = env!("MQTT_PASS");
 pub const MQTT_USER: &str = "printer";
 pub const CLIENT_ID: &str = "fax-printer-1";
 
-/// Must match DEVICE_ID on the server. If these drift the broker accepts
-/// publishes nobody is subscribed to and jobs vanish with no error anywhere,
-/// which is why main logs them at boot.
+/// Must match DEVICE_ID on the server. Drift and jobs vanish with no error
+/// anywhere, which is why main logs these at boot.
 pub const JOB_TOPIC: &str = "fax/printer-1/job/+";
 pub const STATE_TOPIC: &str = "fax/printer-1/state";
 
-/// A prefix: the job id is appended, so an ack lands on
-/// fax/printer-1/ack/<id> and the dispatcher matches it by topic without
-/// parsing the payload. Mirrors the shape of the job topic on purpose.
+/// A prefix; the job id is appended. The dispatcher matches by topic, so it
+/// never has to parse the payload.
 pub const ACK_TOPIC: &str = "fax/printer-1/ack";
 
 /// The two states we can publish while connected. `paper` is measured now --
@@ -58,14 +43,6 @@ pub const BAUD_RATE: u32 = 9600;
 /// the longest the main loop ever blocks waiting for a job.
 pub const PAPER_POLL: Duration = Duration::from_secs(5);
 
-/// How long to wait for the printer to say it has finished a job.
-///
-/// Thirty seconds is far more than text needs -- a full 32-column receipt is
-/// under a second of engine time -- and is sized for images, where a raster
-/// block is orders of magnitude more data at the same 9600 baud.
-///
-/// The dispatcher's ackTimeout is two seconds longer, so a printer that gives
-/// up gets to say why rather than leaving the server to guess. Nothing above
-/// that waits at all any more: printing is fire-and-forget over HTTP, and the
-/// outcome reaches the browser on the event stream.
+/// Far more than text needs; sized for images. The dispatcher's ackTimeout is
+/// two seconds longer, so a printer that gives up gets to say why.
 pub const PRINT_TIMEOUT: Duration = Duration::from_secs(30);

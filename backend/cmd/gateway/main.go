@@ -1,9 +1,5 @@
-// Command gateway is the public edge of the service.
-//
-// It is the only process reachable from the internet: it validates what
-// arrives, calls the renderer and the dispatcher in turn, and reports what
-// happened. It holds no state -- printing is synchronous, so a job lives
-// exactly as long as the request that carried it.
+// Command gateway is the public edge: the only process reachable from the
+// internet. It validates, calls the renderer then the dispatcher, holds no state.
 package main
 
 import (
@@ -21,12 +17,8 @@ import (
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
-// Both upstreams are quick now: rendering is CPU work, and printing returns
-// once the broker has the job rather than once the paper stops moving. Waiting
-// for the printer happens in the dispatcher, off the request entirely.
-//
-// Separate constants anyway, because they are separate concerns and the next
-// person to make one of them slow should not silently move the other.
+// Both are quick: printing returns once the broker has the job. Separate
+// constants so making one slow does not silently move the other.
 const (
 	renderTimeout = 5 * time.Second
 	printTimeout  = 5 * time.Second
@@ -61,29 +53,22 @@ func main() {
 
 	srv := &http.Server{
 		Addr: *addr,
-		// Every request gets a trace id here, and one line when it
-		// finishes. Outermost, so even a request that never reaches a
-		// handler is still accounted for.
+		// Outermost, so a request that never reaches a handler is still logged.
 		Handler: logging.Requests(log)(a.routes()),
-		// A public service needs these. Without them one slow client can
-		// hold a connection open indefinitely.
+		// Without these one slow client holds a connection open forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// The event stream is exempt: sse.Start clears the deadline on that
-		// response, which it has to, since WriteTimeout covers a whole
-		// response and a stream is one that never ends.
+		// Event streams are exempt: sse.Start clears their deadline.
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Ctrl-C and SIGTERM stop accepting new connections and let in-flight
-	// requests finish.
+	// Stop accepting, then let in-flight requests finish.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// One connection to the dispatcher, held for the life of the process and
-	// reconnected when it drops. Started before the listener so the first
-	// browser to arrive already has something to be told.
+	// One connection to the dispatcher, reconnected when it drops. Before the
+	// listener, so the first browser already has something to be told.
 	go a.hub.run(ctx)
 
 	go func() {

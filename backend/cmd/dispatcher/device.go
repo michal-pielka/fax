@@ -23,15 +23,12 @@ var (
 	ErrBusy    = errors.New("printer is busy")
 )
 
-// ackTimeout bounds the wait for the firmware to report a job finished. It has
-// to exceed the firmware's own PRINT_TIMEOUT, so that a printer which gives up
-// gets to say why instead of leaving us guessing.
+// ackTimeout must exceed the firmware's PRINT_TIMEOUT, so a printer that gives
+// up gets to say why rather than leaving this to guess.
 const ackTimeout = 32 * time.Second
 
-// State is what the device last told us about itself.
-//
-// The zero value is "offline, no paper", which is the right default: until the
-// device says otherwise, assume nothing can be printed.
+// State is what the device last told us. The zero value is offline with no
+// paper: until it says otherwise, assume nothing can be printed.
 type State struct {
 	Online bool `json:"online"`
 	Paper  bool `json:"paper"`
@@ -47,11 +44,8 @@ type Printer interface {
 	Subscribe() (<-chan struct{}, func())
 }
 
-// Device owns the MQTT connection and everything known about the printer.
-//
-// There is exactly one of these per process, and the process must be a
-// singleton: two dispatchers would both publish, and the printer would run
-// every job twice.
+// Device owns the MQTT connection. The process must be a singleton: two
+// dispatchers would both publish, and every receipt would print twice.
 type Device struct {
 	client mqtt.Client
 	topics topics
@@ -59,16 +53,12 @@ type Device struct {
 
 	mu    sync.RWMutex
 	state State
-	// last is how the most recent job ended, nil until one has. Guarded by mu
-	// because it is read in the same breath as state.
+	// How the last job ended, nil until one has. Under mu, since it is read
+	// in the same breath as state.
 	last *Result
 
-	// One in-flight job at a time, keyed by id. The printer is a single
-	// physical thing, so a second job would interleave with the first --
-	// which is why a busy printer refuses work rather than queueing it.
-	//
-	// Its own mutex, not mu: this is touched on every ack, and mu is read on
-	// every request.
+	// One in-flight job at a time: a second would interleave with the first.
+	// Its own mutex, since this is touched on every ack.
 	waitMu  sync.Mutex
 	waiting map[string]chan ack
 
@@ -94,23 +84,17 @@ type Result struct {
 	Error string `json:"error,omitempty"`
 }
 
-// topics groups the two the dispatcher cares about. They are derived from the
-// device id so a second printer needs configuration, not code.
+// topics are derived from the device id, so a second printer needs
+// configuration rather than code.
 type topics struct {
-	// job is a prefix: the id is appended, making the full topic
-	// fax/<device>/job/<id>.
-	//
-	// Putting the id in the topic rather than the payload keeps the payload
-	// raw ESC/POS, so the firmware writes it straight to the UART with no JSON
-	// parser and no base64 decoder on a device with 300KB of RAM.
+	// A prefix; the id is appended. In the topic rather than the payload, so
+	// the payload stays raw ESC/POS with no parser on the device.
 	job string
-	// state is retained and carries the device's last will, so subscribing
-	// yields the current state immediately even after a dispatcher restart.
+	// Retained, and carries the last will, so subscribing yields the current
+	// state even after a restart.
 	state string
-	// ack is a prefix, mirroring job: the firmware replies on
-	// fax/<device>/ack/<id> once the paper has actually moved. Never
-	// retained -- a retained ack would be redelivered on every reconnect,
-	// long after the request that cared about it had gone.
+	// A prefix mirroring job. Never retained: a retained ack would replay on
+	// every reconnect, long after anyone was waiting.
 	ack string
 }
 
@@ -128,9 +112,8 @@ type Config struct {
 	Username string
 	Password string
 	Device   string
-	// TLS is not configured here: the broker URL scheme decides it. Use
-	// ssl://host:8883 in production and tcp://host:1883 only on a trusted
-	// network -- credentials cross the wire in the clear otherwise.
+	// The URL scheme decides TLS: ssl://host:8883 in production, tcp:// only
+	// where credentials crossing in the clear is acceptable.
 }
 
 func NewDevice(cfg Config, log *slog.Logger) *Device {
@@ -184,11 +167,8 @@ func (d *Device) Close() {
 func (d *Device) onConnect(c mqtt.Client) {
 	d.log.Info("connected to broker")
 
-	// QoS 1: losing a state change would leave the dispatcher lying about the
-	// printer indefinitely, since the next one may be hours away.
-	//
-	// Blocking here is safe. paho calls this handler on its own goroutine
-	// (`go c.options.OnConnect(c)`), unlike the message handlers below.
+	// QoS 1: a lost state change leaves us lying for hours. Blocking is safe
+	// here -- paho runs OnConnect on its own goroutine, unlike the handlers.
 	for topic, handler := range map[string]mqtt.MessageHandler{
 		d.topics.state:      d.onState,
 		d.topics.ack + "/+": d.onAck,
@@ -200,9 +180,8 @@ func (d *Device) onConnect(c mqtt.Client) {
 	}
 }
 
-// onConnectionLost clears the state. The device may well be fine, but we can
-// no longer know that, and claiming a printer is online when we have lost the
-// only channel that would tell us otherwise is worse than admitting ignorance.
+// onConnectionLost clears the state: the device may be fine, but claiming so
+// having lost the only channel that would say otherwise is worse.
 func (d *Device) onConnectionLost(_ mqtt.Client, err error) {
 	d.log.Warn("broker connection lost", "err", err)
 	d.setState(State{})
@@ -221,13 +200,8 @@ func (d *Device) onState(_ mqtt.Client, m mqtt.Message) {
 	d.setState(s)
 }
 
-// Subscribe returns a channel that fires whenever anything observable about
-// the printer changes, plus the function that stops it.
-//
-// It signals *that* something changed rather than what. Subscribers then read
-// State and Busy themselves, which keeps notify out of both mutexes -- they
-// are taken in different orders on different paths, so a notify that built a
-// snapshot would be a deadlock waiting to happen.
+// Subscribe fires whenever anything observable changes. It signals *that*,
+// not what, which keeps notify out of both mutexes and out of deadlock.
 func (d *Device) Subscribe() (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 
@@ -242,13 +216,8 @@ func (d *Device) Subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-// notify wakes every subscriber.
-//
-// Nothing here may block: this is reached from onState, which paho runs on the
-// one goroutine it uses for every inbound message. Capacity one plus a
-// non-blocking send also means a burst of changes coalesces into a single
-// wake-up, and the subscriber reads the final state rather than replaying
-// three intermediate ones that are already wrong.
+// notify must never block: onState runs on paho's single message goroutine.
+// Capacity one also coalesces a burst into one wake-up.
 func (d *Device) notify() {
 	d.subMu.Lock()
 	defer d.subMu.Unlock()
@@ -261,11 +230,8 @@ func (d *Device) notify() {
 	}
 }
 
-// onAck matches a reply to the request waiting for it.
-//
-// Nothing in here may block. paho's Order option defaults to true, so every
-// message handler runs in turn on one shared goroutine, and the PUBACK is only
-// sent once this returns -- a stall here freezes the whole connection.
+// onAck must never block: paho's Order defaults to true, so handlers share one
+// goroutine and the PUBACK waits on this returning.
 func (d *Device) onAck(_ mqtt.Client, m mqtt.Message) {
 	// The id is the last segment of fax/<device>/ack/<id>.
 	parts := strings.Split(m.Topic(), "/")
@@ -313,13 +279,8 @@ func (d *Device) State() State {
 	return d.state
 }
 
-// Publish sends one job to the printer.
-//
-// It returns as soon as the broker has the job, not when the paper stops
-// moving. Everything knowable up front is still an error here -- no printer,
-// no paper, already printing -- and how the job actually ended arrives later
-// as a state event, because holding an HTTP request open for thirty seconds
-// is a fragile way to deliver one bit that is already being broadcast.
+// Publish returns as soon as the broker has the job. What is knowable up front
+// is an error here; how it ended arrives later as a state event.
 func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	st := d.State()
 
@@ -330,9 +291,8 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 		return ErrNoPaper
 	}
 
-	// Registered before the publish, not after: the printer can answer in
-	// milliseconds, and an ack that arrives before its waiter exists is an ack
-	// nobody hears.
+	// Before the publish, not after: the printer answers in milliseconds, and
+	// an ack without a waiter is an ack nobody hears.
 	acks, err := d.wait(id)
 	if err != nil {
 		return err
@@ -340,9 +300,7 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 
 	topic := d.topics.job + "/" + id
 
-	// retained is false, and must stay false. A retained job would be
-	// redelivered every time the ESP32 reconnects, so one receipt would print
-	// again on every power cycle for as long as it sat on the broker.
+	// retained must stay false: a retained job reprints on every reconnect.
 	tok := d.client.Publish(topic, 1, false, payload)
 
 	select {
@@ -361,19 +319,15 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 
 	d.log.InfoContext(ctx, "published", "bytes", len(payload))
 
-	// Deliberately not tied to ctx: the paper is moving now and will keep
-	// moving whether or not anyone is still on the other end of the request.
-	// Abandoning this would leave the printer claimed forever.
+	// Not tied to ctx: the paper is moving regardless, and abandoning this
+	// would leave the printer claimed forever.
 	go d.awaitAck(id, acks)
 
 	return nil
 }
 
-// awaitAck records how a job ended and frees the printer for the next one.
-//
-// setResult does not notify on its own, so the deferred stopWaiting is what
-// publishes both changes -- the result, and the printer going idle -- as one
-// event rather than two, the first of which would be half true.
+// awaitAck records how a job ended and frees the printer. setResult does not
+// notify, so the deferred stopWaiting emits both changes as one event.
 func (d *Device) awaitAck(id string, acks <-chan ack) {
 	defer d.stopWaiting(id)
 
@@ -395,9 +349,8 @@ func (d *Device) setResult(r Result) {
 	d.mu.Unlock()
 }
 
-// LastJob reports how the most recent job ended, and whether there has been
-// one. A single slot is enough: only one job runs at a time, so the last
-// result is the only one anybody can still be asking about.
+// LastJob reports how the most recent job ended. One slot is enough: only one
+// runs at a time, so it is the only one anybody can still be asking about.
 func (d *Device) LastJob() (Result, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -409,9 +362,8 @@ func (d *Device) LastJob() (Result, bool) {
 	return *d.last, true
 }
 
-// wait claims the printer for one job. There is only ever one slot, because
-// there is only ever one printer: a second job would interleave its bytes with
-// the first, and this design has no queue to put it in.
+// wait claims the printer for one job. One slot, because there is one printer
+// and no queue to put a second job in.
 func (d *Device) wait(id string) (<-chan ack, error) {
 	d.waitMu.Lock()
 
@@ -425,8 +377,8 @@ func (d *Device) wait(id string) (<-chan ack, error) {
 	d.waiting[id] = ch
 	d.waitMu.Unlock()
 
-	// After the unlock, not before: notify takes subMu, and keeping the two
-	// locks from ever overlapping is what makes the ordering unarguable.
+	// After the unlock: notify takes subMu, and never overlapping the two
+	// makes the lock ordering unarguable.
 	d.notify()
 
 	return ch, nil
@@ -440,9 +392,8 @@ func (d *Device) stopWaiting(id string) {
 	d.notify()
 }
 
-// Busy reports whether a job is on the printer right now. It is what feeds the
-// BUSY indicator, and it needs no extra bookkeeping: an unfinished job is
-// exactly an outstanding waiter.
+// Busy needs no bookkeeping: an unfinished job is exactly an outstanding
+// waiter.
 func (d *Device) Busy() bool {
 	d.waitMu.Lock()
 	defer d.waitMu.Unlock()
