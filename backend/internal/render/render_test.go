@@ -70,16 +70,47 @@ func TestRender(t *testing.T) {
 		{
 			name: "underline",
 			in: doc.Document{Text: "ab", Spans: []doc.Span{
-				{Start: 1, End: 2, Style: doc.Style{Underline: true}},
+				{Start: 1, End: 2, Style: doc.Style{Underline: 1}},
 			}},
-			want: cat(text("a"), underlineOn, text("b"), underlineOff),
+			want: cat(text("a"), underline(1), text("b"), underline(0)),
+		},
+		{
+			name: "thick underline is the same command with a different count",
+			in: doc.Document{Text: "ab", Spans: []doc.Span{
+				{Start: 0, End: 1, Style: doc.Style{Underline: 2}},
+			}},
+			want: cat(underline(2), text("a"), underline(0), text("b")),
+		},
+		{
+			// The join is one command, not off-then-on: the printer would
+			// otherwise print nothing between the two.
+			name: "thin to thick switches in one step",
+			in: doc.Document{Text: "ab", Spans: []doc.Span{
+				{Start: 0, End: 1, Style: doc.Style{Underline: 1}},
+				{Start: 1, End: 2, Style: doc.Style{Underline: 2}},
+			}},
+			want: cat(underline(1), text("a"), underline(2), text("b"), underline(0)),
+		},
+		{
+			name: "invert",
+			in: doc.Document{Text: "ab", Spans: []doc.Span{
+				{Start: 0, End: 1, Style: doc.Style{Invert: true}},
+			}},
+			want: cat(invertOn, text("a"), invertOff, text("b")),
+		},
+		{
+			name: "invert running to the end is closed before the frame",
+			in: doc.Document{Text: "x", Spans: []doc.Span{
+				{Start: 0, End: 1, Style: doc.Style{Invert: true}},
+			}},
+			want: cat(invertOn, text("x"), invertOff),
 		},
 		{
 			name: "bold and underline together emit both",
 			in: doc.Document{Text: "x", Spans: []doc.Span{
-				{Start: 0, End: 1, Style: doc.Style{Bold: true, Underline: true}},
+				{Start: 0, End: 1, Style: doc.Style{Bold: true, Underline: 1}},
 			}},
-			want: cat(boldOn, underlineOn, text("x"), boldOff, underlineOff),
+			want: cat(boldOn, underline(1), text("x"), boldOff, underline(0)),
 		},
 		{
 			// Breaks a boundary-walking implementation: it would switch bold
@@ -141,7 +172,7 @@ func TestRenderAlwaysResetsAndFeeds(t *testing.T) {
 // come from the same call, and golden tests are worthless if it drifts.
 func TestRenderIsDeterministic(t *testing.T) {
 	d := doc.Document{Text: "abcdef", Spans: []doc.Span{bold(1, 3), {
-		Start: 2, End: 5, Style: doc.Style{Underline: true},
+		Start: 2, End: 5, Style: doc.Style{Underline: 2, Invert: true},
 	}}}
 
 	first := Render(d)
@@ -158,20 +189,22 @@ func TestRenderIsDeterministic(t *testing.T) {
 func TestTextSurvivesUnaltered(t *testing.T) {
 	const message = "Order #1234\nTotal: $9.99\n** thanks **"
 
-	got := Render(doc.Document{Text: message, Spans: []doc.Span{bold(0, 5)}})
+	got := Render(doc.Document{Text: message, Spans: []doc.Span{bold(0, 5), {
+		Start: 12, End: 17, Style: doc.Style{Underline: 2, Invert: true},
+	}}})
 
 	if stripped := stripCommands(body(t, got)); !bytes.Equal(stripped, []byte(message)) {
 		t.Errorf("text was altered:\ngot  %q\nwant %q", stripped, message)
 	}
 }
 
-// stripCommands leaves only what lands on paper. ESC @ is two bytes; the rest
-// take a parameter and are three.
+// stripCommands leaves only what lands on paper. ESC @ is two bytes; the rest,
+// ESC and GS alike, take a parameter and are three.
 func stripCommands(b []byte) []byte {
 	var out []byte
 
 	for i := 0; i < len(b); {
-		if b[i] != 0x1b {
+		if b[i] != 0x1b && b[i] != 0x1d {
 			out = append(out, b[i])
 			i++
 
@@ -191,11 +224,11 @@ func stripCommands(b []byte) []byte {
 // A guard on the guard: if stripCommands were wrong, the test above would pass
 // for the wrong reason.
 func TestStripCommands(t *testing.T) {
-	in := cat(reset, boldOn, text("ab"), boldOff, underlineOn, text("c"),
-		underlineOff, feed(tailFeed))
+	in := cat(reset, boldOn, text("ab"), boldOff, underline(1), text("c"),
+		underline(0), invertOn, text("d"), invertOff, feed(tailFeed))
 
-	if got := stripCommands(in); string(got) != "abc" {
-		t.Errorf("stripCommands = %q, want \"abc\"", got)
+	if got := stripCommands(in); string(got) != "abcd" {
+		t.Errorf("stripCommands = %q, want \"abcd\"", got)
 	}
 }
 

@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	reset        = []byte{0x1b, '@'}
-	boldOn       = []byte{0x1b, 'E', 1}
-	boldOff      = []byte{0x1b, 'E', 0}
-	underlineOn  = []byte{0x1b, '-', 1}
-	underlineOff = []byte{0x1b, '-', 0}
+	reset     = []byte{0x1b, '@'}
+	boldOn    = []byte{0x1b, 'E', 1}
+	boldOff   = []byte{0x1b, 'E', 0}
+	invertOn  = []byte{0x1d, 'B', 1}
+	invertOff = []byte{0x1d, 'B', 0}
 
 	// Frame only. Documents carry bold and underline and nothing else: the
 	// frame is ours, the contents are theirs.
@@ -24,6 +24,12 @@ var (
 	sizeNormal = []byte{0x1d, '!', 0x00}
 	sizeDouble = []byte{0x1d, '!', 0x11}
 )
+
+// underline emits ESC - n: 0 off, 1 one dot thick, 2 two dots. The document
+// carries the same numbers, so there is nothing to translate.
+func underline(dots int) []byte {
+	return []byte{0x1b, '-', byte(dots)}
+}
 
 // cols is the printer's character width at the default font. The title prints
 // at double width, so it has half as many.
@@ -74,7 +80,11 @@ func Render(d doc.Document) []byte {
 		}
 
 		if want.Underline != cur.Underline {
-			buf.Write(pick(want.Underline, underlineOn, underlineOff))
+			buf.Write(underline(want.Underline))
+		}
+
+		if want.Invert != cur.Invert {
+			buf.Write(pick(want.Invert, invertOn, invertOff))
 		}
 
 		cur = want
@@ -88,8 +98,12 @@ func Render(d doc.Document) []byte {
 		buf.Write(boldOff)
 	}
 
-	if cur.Underline {
-		buf.Write(underlineOff)
+	if cur.Underline != 0 {
+		buf.Write(underline(0))
+	}
+
+	if cur.Invert {
+		buf.Write(invertOff)
 	}
 
 	writeFooter(&buf)
@@ -149,7 +163,8 @@ func styleAt(spans []doc.Span, i int) doc.Style {
 	for _, sp := range spans {
 		if i >= sp.Start && i < sp.End {
 			s.Bold = s.Bold || sp.Style.Bold
-			s.Underline = s.Underline || sp.Style.Underline
+			s.Underline = max(s.Underline, sp.Style.Underline)
+			s.Invert = s.Invert || sp.Style.Invert
 		}
 	}
 

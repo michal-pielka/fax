@@ -12,7 +12,11 @@
   /* The textarea holds the text and the browser owns editing: caret, selection,
      undo, IME, mobile keyboards. This module owns only two things the textarea
      cannot: a style per character, and the size of the paper. */
-  const BOLD = 1, UNDER = 2;
+  const BOLD = 1, UNDER = 2, THICK = 4, INVERT = 8;
+
+  /* Thin and thick underline are one printer setting with two values, so
+     switching one on switches the other off. */
+  const UNDERLINES = UNDER | THICK;
 
   /* One byte per character of ta.value, kept the same length at all times. */
   let styles = new Uint8Array(0);
@@ -20,9 +24,14 @@
   /* Only what the printer does. Anything else would look right here and
      silently vanish on paper. */
   const TOOLS = [
-    { key: 'bold',  label: 'B', title: 'Bold',      bit: BOLD },
-    { key: 'under', label: 'U', title: 'Underline', bit: UNDER },
+    { key: 'bold',   label: 'B', title: 'Bold (Ctrl+B)',                    bit: BOLD },
+    { key: 'under',  label: 'U', title: 'Underline (Ctrl+U)',               bit: UNDER, clears: UNDERLINES },
+    { key: 'thick',  label: 'U', title: 'Thick underline (Ctrl+Shift+U)',   bit: THICK, clears: UNDERLINES },
+    { key: 'invert', label: 'A', title: 'Reverse, white on black (Ctrl+I)', bit: INVERT },
   ];
+
+  /* Set a tool's bit on a style byte, clearing what it excludes. */
+  const withTool = (style, t) => (style & ~(t.clears || 0)) | t.bit;
 
   /* ---- the paper ------------------------------------------------------ */
 
@@ -95,6 +104,11 @@
     next.set(styles.subarray(0, p), 0);
     next.fill(inherit, p, p + inserted);
     next.set(styles.subarray(p + removed), p + inserted);
+
+    /* A newline has no glyph, so it has no style: an inverted one would paint
+       a dark cell at the end of the row in the mirror. */
+    for (let i = p; i < p + inserted; i++) if (newT[i] === '\n') next[i] = 0;
+
     styles = next;
   }
 
@@ -102,8 +116,8 @@
     const a = ta.selectionStart, b = ta.selectionEnd;
 
     if (a === b) {
-      const base = pending !== null ? pending : (a > 0 && ta.value[a - 1] !== '\n' ? styles[a - 1] : 0);
-      pending = base ^ t.bit;
+      const base = styleAtCaret();
+      pending = base & t.bit ? base & ~t.bit : withTool(base, t);
       syncTools();
       return;
     }
@@ -112,13 +126,22 @@
        for a selection that visibly is. */
     let allOn = true;
     for (let i = a; i < b; i++) if (ta.value[i] !== '\n' && !(styles[i] & t.bit)) { allOn = false; break; }
-    for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : styles[i] | t.bit;
+    for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : withTool(styles[i], t);
 
     render();
     syncTools();
   }
 
   /* ---- rendering ------------------------------------------------------ */
+
+  function classesOf(style) {
+    const c = [];
+    if (style & BOLD) c.push('b');
+    if (style & UNDER) c.push('u');
+    if (style & THICK) c.push('uu');
+    if (style & INVERT) c.push('i');
+    return c.join(' ');
+  }
 
   /* The mirror shows the styled text under a transparent textarea. Same font,
      same width, same wrapping, so its glyphs sit exactly under the invisible
@@ -135,7 +158,7 @@
       const run = text.slice(i, j);
       if (styles[i]) {
         const span = document.createElement('span');
-        span.className = (styles[i] & BOLD ? 'b ' : '') + (styles[i] & UNDER ? 'u' : '');
+        span.className = classesOf(styles[i]);
         span.textContent = run;
         frag.append(span);
       } else {
@@ -155,7 +178,7 @@
 
   TOOLS.forEach(t => {
     const b = document.createElement('button');
-    b.textContent = t.label; b.title = t.title; b.dataset.key = t.key;
+    b.textContent = t.label; b.title = t.title; b.dataset.key = t.key; b.className = t.key;
     /* mousedown, so the textarea keeps focus and its selection. */
     b.addEventListener('mousedown', e => e.preventDefault());
     b.addEventListener('click', () => applyTool(t));
@@ -273,8 +296,9 @@
   ta.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
     if (meta && e.key === 'Enter') { e.preventDefault(); print(); return; }
-    if (meta && e.key.toLowerCase() === 'b') { e.preventDefault(); applyTool(TOOLS[0]); return; }
-    if (meta && e.key.toLowerCase() === 'u') { e.preventDefault(); applyTool(TOOLS[1]); return; }
+    if (!meta) return;
+    const tool = { b: 'bold', u: e.shiftKey ? 'thick' : 'under', i: 'invert' }[e.key.toLowerCase()];
+    if (tool) { e.preventDefault(); applyTool(TOOLS.find(t => t.key === tool)); }
   });
 
   /* The textarea scrolls to chase the caret even with the content fitting,
@@ -296,7 +320,9 @@
       while (j < text.length && styles[j] === styles[i] && text[j] !== '\n') j++;
       const style = {};
       if (styles[i] & BOLD) style.bold = true;
-      if (styles[i] & UNDER) style.underline = true;
+      if (styles[i] & UNDER) style.underline = 1;
+      if (styles[i] & THICK) style.underline = 2;
+      if (styles[i] & INVERT) style.invert = true;
       spans.push({ start: i, end: j, style });
       i = j;
     }
