@@ -72,10 +72,10 @@ errors)
 			| map("\(.key)=\(.value)") | join(" "))"'
 	;;
 slow)
-	# /api/events is excluded on purpose: a stream's duration is how long the
-	# tab was open, so every one of them looks like the slowest request ever.
+	# A print legitimately takes about a second: it waits for the firmware's
+	# ack. Raise the threshold to see only the ones that waited longer.
 	stream | jq -r --argjson over "${2:-1000}" '
-		select(.msg == "request" and .path != "/api/events" and .ms >= $over)
+		select(.msg == "request" and .ms >= $over)
 		| "\(.time[11:19])  \(.ms)ms  \(.status)  \(.method) \(.path)  \(.ip)  \(.trace[0:8])"'
 	;;
 callers)

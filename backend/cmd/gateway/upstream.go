@@ -21,8 +21,6 @@ type Renderer interface {
 type Dispatcher interface {
 	Print(ctx context.Context, id string, payload []byte) error
 	State(ctx context.Context) (State, error)
-	// Events opens the dispatcher's state stream. The caller closes it.
-	Events(ctx context.Context) (io.ReadCloser, error)
 }
 
 // Repeated rather than shared with the other services. DisallowUnknownFields
@@ -36,19 +34,10 @@ type printRequest struct {
 	Payload []byte `json:"payload"`
 }
 
-// State mirrors the dispatcher's; the zero value is the safe answer. Last is
-// the only thing that ever says whether a fire-and-forget print came out.
+// State mirrors the dispatcher's; the zero value is the safe answer.
 type State struct {
-	Online bool    `json:"online"`
-	Paper  bool    `json:"paper"`
-	Busy   bool    `json:"busy"`
-	Last   *Result `json:"last,omitempty"`
-}
-
-type Result struct {
-	ID    string `json:"id"`
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	Online bool `json:"online"`
+	Paper  bool `json:"paper"`
 }
 
 // upstreamError keeps the status an internal service replied with: some
@@ -136,41 +125,10 @@ func (c *rendererClient) Render(ctx context.Context, d doc.Document) ([]byte, er
 	return out.Payload, nil
 }
 
-type dispatcherClient struct {
-	jsonClient
-	// No timeout: Client.Timeout covers reading the body, and a stream's body
-	// never ends. The request context closes it instead.
-	stream *http.Client
-}
+type dispatcherClient struct{ jsonClient }
 
 func NewDispatcherClient(base string, hc *http.Client) Dispatcher {
-	return &dispatcherClient{
-		jsonClient: jsonClient{name: "dispatcher", base: base, http: hc},
-		stream:     &http.Client{},
-	}
-}
-
-func (c *dispatcherClient) Events(ctx context.Context) (io.ReadCloser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/internal/events", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set(logging.TraceHeader, logging.Trace(ctx))
-
-	resp, err := c.stream.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-
-		return nil, &upstreamError{Service: c.name, Status: resp.StatusCode}
-	}
-
-	return resp.Body, nil
+	return &dispatcherClient{jsonClient{name: "dispatcher", base: base, http: hc}}
 }
 
 func (c *dispatcherClient) Print(ctx context.Context, id string, payload []byte) error {

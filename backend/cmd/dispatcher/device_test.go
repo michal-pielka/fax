@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"testing"
-	"time"
 )
 
 func TestNewTopics(t *testing.T) {
@@ -59,7 +58,7 @@ func TestOnlyOneJobAtATime(t *testing.T) {
 		t.Fatalf("first wait: %v", err)
 	}
 
-	if !d.Busy() {
+	if !d.busy() {
 		t.Error("Busy() is false with a job outstanding")
 	}
 
@@ -69,7 +68,7 @@ func TestOnlyOneJobAtATime(t *testing.T) {
 
 	d.stopWaiting("first")
 
-	if d.Busy() {
+	if d.busy() {
 		t.Error("Busy() is true after the job finished")
 	}
 
@@ -78,113 +77,39 @@ func TestOnlyOneJobAtATime(t *testing.T) {
 	}
 }
 
-// The outcome of a job is no longer an error on a request -- it is recorded
-// and broadcast, because the request returned long before the paper moved.
-func TestLastJobRecordsTheOutcome(t *testing.T) {
-	d := newWaiting()
-
-	if _, ok := d.LastJob(); ok {
-		t.Error("a fresh Device claims to have finished a job")
+// The firmware's answer becomes the request's error, so the caller learns how
+// the job ended without a second round trip.
+func TestAwaitAckMapsTheAnswer(t *testing.T) {
+	tests := []struct {
+		name string
+		ack  ack
+		want error
+	}{
+		{"ok", ack{OK: true}, nil},
+		{"no paper measured by the firmware", ack{Error: reasonNoPaper}, ErrNoPaper},
+		{"printer went silent", ack{Error: reasonNoConfirmation}, ErrNoConfirmation},
 	}
 
-	d.setResult(Result{ID: "abc", OK: true})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newWaiting()
 
-	got, ok := d.LastJob()
-	if !ok {
-		t.Fatal("LastJob reports nothing after a result")
-	}
+			acks, err := d.wait("job")
+			if err != nil {
+				t.Fatalf("wait: %v", err)
+			}
 
-	if got.ID != "abc" || !got.OK {
-		t.Errorf("LastJob = %+v", got)
-	}
+			ch := d.waiting["job"]
+			ch <- tt.ack
 
-	// One slot, overwritten. Only one job runs at a time, so the last result
-	// is the only one anybody can still be asking about.
-	d.setResult(Result{ID: "def", Error: reasonNoConfirmation})
+			if got := d.awaitAck("job", acks); !errors.Is(got, tt.want) {
+				t.Errorf("awaitAck = %v, want %v", got, tt.want)
+			}
 
-	if got, _ := d.LastJob(); got.ID != "def" || got.OK {
-		t.Errorf("LastJob = %+v after a second job", got)
-	}
-}
-
-func TestSubscribeSignalsOnEveryChange(t *testing.T) {
-	d := newWaiting()
-	d.subs = make(map[chan struct{}]struct{})
-
-	changed, unsubscribe := d.Subscribe()
-	defer unsubscribe()
-
-	d.setState(State{Online: true, Paper: true})
-
-	select {
-	case <-changed:
-	case <-time.After(time.Second):
-		t.Fatal("a state change did not signal")
-	}
-
-	// Busy is not part of State and nothing publishes it, so claiming the
-	// printer has to signal too or the lamp would never light.
-	if _, err := d.wait("job"); err != nil {
-		t.Fatalf("wait: %v", err)
-	}
-
-	select {
-	case <-changed:
-	case <-time.After(time.Second):
-		t.Fatal("claiming the printer did not signal")
-	}
-
-	d.stopWaiting("job")
-
-	select {
-	case <-changed:
-	case <-time.After(time.Second):
-		t.Fatal("releasing the printer did not signal")
-	}
-}
-
-// A burst must collapse into one wake-up, and a full channel must never block
-// notify, which runs on paho's single message goroutine.
-func TestNotifyCoalescesAndNeverBlocks(t *testing.T) {
-	d := newWaiting()
-	d.subs = make(map[chan struct{}]struct{})
-
-	changed, unsubscribe := d.Subscribe()
-	defer unsubscribe()
-
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-
-		for range 100 {
-			d.setState(State{Online: true})
-		}
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("notify blocked on a subscriber that never read")
-	}
-
-	if len(changed) != 1 {
-		t.Errorf("%d signals queued, want 1", len(changed))
-	}
-}
-
-func TestUnsubscribeStopsSignals(t *testing.T) {
-	d := newWaiting()
-	d.subs = make(map[chan struct{}]struct{})
-
-	_, unsubscribe := d.Subscribe()
-	unsubscribe()
-
-	d.subMu.Lock()
-	n := len(d.subs)
-	d.subMu.Unlock()
-
-	if n != 0 {
-		t.Errorf("%d subscribers left after unsubscribe", n)
+			// Whatever the answer, the printer is free for the next job.
+			if d.busy() {
+				t.Error("printer still claimed after the ack")
+			}
+		})
 	}
 }

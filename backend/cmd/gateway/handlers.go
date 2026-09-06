@@ -5,12 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"time"
 	"unicode/utf8"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/logging"
-	"github.com/michal-pielka/fax/server/internal/sse"
 )
 
 // maxBody caps the body before the decoder sees it. Validate stops a large
@@ -20,7 +18,6 @@ const maxBody = 64 << 10 // 64 KiB
 type api struct {
 	renderer   Renderer
 	dispatcher Dispatcher
-	hub        *hub
 	limits     doc.Limits
 	log        *slog.Logger
 }
@@ -30,7 +27,6 @@ func (a *api) routes() *http.ServeMux {
 
 	mux.HandleFunc("POST /api/print", a.print)
 	mux.HandleFunc("GET /api/state", a.state)
-	mux.HandleFunc("GET /api/events", a.events)
 	mux.HandleFunc("GET /api/health", a.health)
 
 	return mux
@@ -73,6 +69,8 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	// the firmware. Stored nowhere: it lives as long as the request.
 	id := logging.Trace(r.Context())
 
+	// Blocks until the firmware has answered for the job: about a second of
+	// UART time and two broker hops. The errors below are that answer.
 	if err := a.dispatcher.Print(r.Context(), id, payload); err != nil {
 		a.upstreamFailed(w, r, "dispatcher", err)
 		return
@@ -80,15 +78,15 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 
 	// The message is logged on purpose: it is about to be printed and read
 	// anyway, and nothing else records what a stranger sent.
-	a.log.InfoContext(r.Context(), "print accepted",
+	a.log.InfoContext(r.Context(), "printed",
 		"chars", utf8.RuneCountInString(d.Text),
 		"bytes", len(payload),
 		"text", logging.Truncate(d.Text, 512),
 	)
 
-	// 202, not 200: the job is on its way. Whether it came out arrives on
-	// /api/events tagged with this id.
-	writeJSON(w, http.StatusAccepted, map[string]string{"id": id, "status": "accepted"})
+	// 200: the printer took the bytes and answered with paper in. The id is
+	// the reference printed on the receipt and the trace in the logs.
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "printed"})
 }
 
 func (a *api) state(w http.ResponseWriter, r *http.Request) {
@@ -101,67 +99,18 @@ func (a *api) state(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-// eventHeartbeat keeps a quiet stream from being reaped by a phone radio or a
-// NAT table.
-const eventHeartbeat = 20 * time.Second
-
-// events streams printer state to a browser for as long as the tab is open.
-// Nothing on the chain behind it polls.
-func (a *api) events(w http.ResponseWriter, r *http.Request) {
-	changes, current, unsubscribe, ok := a.hub.subscribe()
-	if !ok {
-		a.fail(w, r, http.StatusServiceUnavailable, "too many open streams")
-		return
-	}
-	defer unsubscribe()
-
-	stream, err := sse.Start(w)
-	if err != nil {
-		a.log.ErrorContext(r.Context(), "cannot start event stream", "err", err)
-		return
-	}
-
-	// Send at once, so the page never opens with the lamps dark waiting for
-	// something to change.
-	if err := stream.Send(current); err != nil {
-		return
-	}
-
-	ping := time.NewTicker(eventHeartbeat)
-	defer ping.Stop()
-
-	for {
-		var err error
-
-		select {
-		case <-r.Context().Done():
-			return
-
-		case s := <-changes:
-			err = stream.Send(s)
-
-		case <-ping.C:
-			err = stream.Ping()
-		}
-
-		// A write that fails means the tab is gone. Nothing to log and nobody
-		// left to tell.
-		if err != nil {
-			return
-		}
-	}
-}
-
 func (a *api) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // passThrough are statuses an internal service chose deliberately: 400 bad
-// document, 409 no paper or busy, 503 offline. Anything else is a 502.
+// document, 409 no paper or busy, 503 offline, 504 no confirmation from the
+// printer. Anything else is a 502.
 var passThrough = map[int]bool{
 	http.StatusBadRequest:         true,
 	http.StatusConflict:           true,
 	http.StatusServiceUnavailable: true,
+	http.StatusGatewayTimeout:     true,
 }
 
 func (a *api) upstreamFailed(w http.ResponseWriter, r *http.Request, service string, err error) {

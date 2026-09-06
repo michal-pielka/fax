@@ -70,8 +70,8 @@ func main() {
 		Handler:           logging.Requests(log)(a.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// No handler outlives a publish now. Event streams are exempt anyway:
-		// sse.Start clears their deadline.
+		// Must exceed ackTimeout, or a print request that is legitimately
+		// waiting on the printer is cut off before it can answer.
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}

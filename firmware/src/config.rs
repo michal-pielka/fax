@@ -43,6 +43,9 @@ pub const BAUD_RATE: u32 = 9600;
 /// the longest the main loop ever blocks waiting for a job.
 pub const PAPER_POLL: Duration = Duration::from_secs(5);
 
-/// Far more than text needs; sized for images. The dispatcher's ackTimeout is
-/// two seconds longer, so a printer that gives up gets to say why.
-pub const PRINT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long to wait for the printer's status byte after a job. It answers as
+/// soon as it has parsed the bytes, normally within milliseconds; the browser
+/// is waiting on this, so a silent printer gets seconds, not a minute. The
+/// dispatcher's ackTimeout is two seconds longer, so a printer that gives up
+/// gets to say why.
+pub const PRINT_TIMEOUT: Duration = Duration::from_secs(5);

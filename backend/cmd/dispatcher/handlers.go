@@ -5,9 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"time"
-
-	"github.com/michal-pielka/fax/server/internal/sse"
 )
 
 // maxBody caps the request body. A rendered receipt is a few hundred bytes;
@@ -26,7 +23,6 @@ func (a *api) routes() *http.ServeMux {
 	// be reachable from outside, since it publishes straight to the printer.
 	mux.HandleFunc("POST /internal/print", a.print)
 	mux.HandleFunc("GET /internal/state", a.state)
-	mux.HandleFunc("GET /internal/events", a.events)
 	mux.HandleFunc("GET /internal/health", a.health)
 
 	return mux
@@ -63,15 +59,16 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The request context reaches the publish, so a gateway that gives up
-	// does not leave this blocked on a silent broker.
+	// Blocks until the firmware answers. The request context reaches the
+	// publish, so a gateway that gives up does not leave this waiting on a
+	// silent broker -- but the printer stays claimed until the ack.
 	err := a.printer.Publish(r.Context(), req.ID, req.Payload)
 
 	switch {
 	case err == nil:
-		// 202: the broker has the job and the printer is claimed. How it ends
-		// arrives on the event stream, tagged with this id.
-		writeJSON(w, http.StatusAccepted, map[string]string{"id": req.ID, "status": "accepted"})
+		// 200: the printer has the bytes and answered with paper in. The
+		// paper itself is still moving for a few seconds after this.
+		writeJSON(w, http.StatusOK, map[string]string{"id": req.ID, "status": "printed"})
 
 	case errors.Is(err, ErrNoPaper), errors.Is(err, ErrBusy):
 		// Both describe the printer's current condition rather than a fault,
@@ -81,6 +78,11 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrOffline):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 
+	case errors.Is(err, ErrNoConfirmation):
+		// The one status that means "unknown": the bytes went out and no
+		// answer came back in time. Not 500, since nothing here failed.
+		writeError(w, http.StatusGatewayTimeout, err.Error())
+
 	default:
 		// Reaching the broker is the dispatcher's job, so failing to is the
 		// dispatcher's fault, not a statement about the printer.
@@ -89,74 +91,8 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// stateResponse adds the two things the device does not publish: whether a job
-// is on the printer, and how the last one ended. Both are ours to know.
-type stateResponse struct {
-	State
-	Busy bool    `json:"busy"`
-	Last *Result `json:"last,omitempty"`
-}
-
 func (a *api) state(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.snapshot())
-}
-
-// snapshot deliberately takes no single lock: the two halves are guarded
-// separately, and holding both would impose an ordering on everything else.
-func (a *api) snapshot() stateResponse {
-	s := stateResponse{State: a.printer.State(), Busy: a.printer.Busy()}
-
-	if last, ok := a.printer.LastJob(); ok {
-		s.Last = &last
-	}
-
-	return s
-}
-
-// eventHeartbeat is how often a silent stream sends a comment, so an idle
-// connection is not mistaken for a dead one by anything in between.
-const eventHeartbeat = 20 * time.Second
-
-// events streams state to the gateway, which fans it out. Written for any
-// number of readers: a redeploy briefly has two gateways.
-func (a *api) events(w http.ResponseWriter, r *http.Request) {
-	changed, unsubscribe := a.printer.Subscribe()
-	defer unsubscribe()
-
-	stream, err := sse.Start(w)
-	if err != nil {
-		a.log.ErrorContext(r.Context(), "cannot start event stream", "err", err)
-		return
-	}
-
-	// Current state first, so a reconnecting gateway is never briefly blind.
-	if err := stream.Send(a.snapshot()); err != nil {
-		return
-	}
-
-	ping := time.NewTicker(eventHeartbeat)
-	defer ping.Stop()
-
-	for {
-		var err error
-
-		select {
-		case <-r.Context().Done():
-			return
-
-		case <-changed:
-			err = stream.Send(a.snapshot())
-
-		case <-ping.C:
-			err = stream.Ping()
-		}
-
-		// Any write error means the reader is gone. There is nothing to
-		// report and nobody to report it to.
-		if err != nil {
-			return
-		}
-	}
+	writeJSON(w, http.StatusOK, a.printer.State())
 }
 
 // health reports on the dispatcher, not the printer: an offline printer is

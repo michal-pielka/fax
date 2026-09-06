@@ -33,7 +33,6 @@ func (f *fakeRenderer) Render(_ context.Context, d doc.Document) ([]byte, error)
 type fakeDispatcher struct {
 	err     error
 	state   State
-	events  string
 	calls   int
 	gotID   string
 	gotPayl []byte
@@ -51,23 +50,12 @@ func (f *fakeDispatcher) State(context.Context) (State, error) {
 	return f.state, f.err
 }
 
-// events is the stream the hub follows. The handler tests never open it, so
-// this only has to satisfy the interface.
-func (f *fakeDispatcher) Events(context.Context) (io.ReadCloser, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-
-	return io.NopCloser(strings.NewReader(f.events)), nil
-}
-
 func newAPI(r Renderer, d Dispatcher) *api {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	return &api{
 		renderer:   r,
 		dispatcher: d,
-		hub:        newHub(d, log),
 		limits:     doc.Limits{MaxRunes: 255},
 		log:        log,
 	}
@@ -93,8 +81,8 @@ func TestPrintHappyPath(t *testing.T) {
 
 	rec := do(t, newAPI(r, d), http.MethodPost, "/api/print", validBody)
 
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202; body %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
 	}
 
 	var out map[string]string
@@ -176,6 +164,7 @@ func TestUpstreamStatusMapping(t *testing.T) {
 	}{
 		{"out of paper passes through", http.StatusConflict, http.StatusConflict},
 		{"offline passes through", http.StatusServiceUnavailable, http.StatusServiceUnavailable},
+		{"no confirmation passes through", http.StatusGatewayTimeout, http.StatusGatewayTimeout},
 		{"rejected document passes through", http.StatusBadRequest, http.StatusBadRequest},
 		// A broken dispatcher is not the caller's fault, and says nothing
 		// about the printer.
@@ -261,9 +250,10 @@ func TestRemovedAndMismatchedRoutes(t *testing.T) {
 		method, path string
 		want         int
 	}{
-		// Printing is synchronous now, so there is no job resource to fetch.
+		// Printing is synchronous, so there is no job resource to fetch and
+		// no event stream to follow.
 		{http.MethodGet, "/api/jobs/abc", http.StatusNotFound},
-		{http.MethodPost, "/api/jobs", http.StatusNotFound},
+		{http.MethodGet, "/api/events", http.StatusNotFound},
 		{http.MethodGet, "/api/print", http.StatusMethodNotAllowed},
 		{http.MethodPost, "/api/state", http.StatusMethodNotAllowed},
 	}

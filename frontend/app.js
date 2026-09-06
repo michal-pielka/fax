@@ -5,11 +5,6 @@
   const $ = (id) => document.getElementById(id);
   const body = $('body'), roll = $('roll'), tools = $('tools'), status = $('status');
   const printBtn = $('print');
-  const lamps = {
-    online: $('lampOnline'),
-    paper: $('lampPaper'),
-    busy: $('lampBusy'),
-  };
 
   $('divTop').textContent = '-'.repeat(COLS);
   $('divBot').textContent = '-'.repeat(COLS);
@@ -260,19 +255,18 @@
 
   let printing = false;
 
-  /* The job id from the 202. Printing is fire-and-forget: how it ended
-     arrives on the event stream tagged with this. */
-  let pending = null;
-
+  /* One request, one answer. The server holds the connection until the
+     printer has taken the bytes, so a 200 means the paper is moving. */
   async function print() {
-    if (printing || !ready || roll.classList.contains('out')) return;
+    if (printing || roll.classList.contains('out')) return;
 
     const doc = document_();
     if (!doc.text.trim()) { setStatus('nothing to print', true); return; }
 
     printing = true;
+    printBtn.disabled = true;
     tools.classList.remove('on');
-    setStatus('sending...');
+    setStatus('printing...');
 
     try {
       const res = await fetch('/api/print', {
@@ -289,30 +283,14 @@
         return;
       }
 
-      const { id } = await res.json();
-      pending = id;
-      setStatus('printing...');
+      setStatus('printed');
+      feed();
     } catch {
       setStatus('could not reach the printer', true);
     } finally {
       printing = false;
+      printBtn.disabled = false;
     }
-  }
-
-  /* Called for every state event. The job we are waiting on has finished when
-     the last result carries its id. */
-  function settle(last) {
-    if (!pending || !last || last.id !== pending) return;
-
-    pending = null;
-
-    if (last.ok) {
-      setStatus('printed');
-      feed();
-      return;
-    }
-
-    setStatus(last.error || 'did not print', true);
   }
 
   /* animationend rather than setTimeout, so the durations live in one place.
@@ -356,43 +334,27 @@
     });
   }
 
-  /* The front panel. Nothing polls: a lamp changes because something
-     happened. EventSource reconnects and re-reads state on its own. */
-  let ready = false;
-
-  function setLamps(s) {
-    lamps.online.classList.toggle('on', !!s.online);
-    lamps.paper.classList.toggle('on', !!s.paper);
-    lamps.busy.classList.toggle('on', !!s.busy);
-    lamps.busy.classList.toggle('blink', !!s.busy);
-
-    /* There is one printer and no queue, so a job while it is busy would be
-       refused with a 409. Better to say so before the words are typed. */
-    ready = !!s.online && !!s.paper && !s.busy;
-    printBtn.disabled = !ready;
-  }
-
-  /* Dark until the first event, which is a few milliseconds away. Starting
-     lit would mean the button is clickable before anything is known. */
-  setLamps({});
-
-  const events = new EventSource('/api/events');
-  events.onmessage = (e) => {
-    let state;
+  /* Asked once on arrival and again when the tab comes back, not polled:
+     the print request itself is the authority, and answers offline or no
+     paper on its own. This only saves typing a message into a dead machine. */
+  async function checkPrinter() {
+    let s;
 
     try {
-      state = JSON.parse(e.data);
+      s = await (await fetch('/api/state')).json();
     } catch {
-      return; /* One bad event is not worth breaking the page over. */
+      return; /* Unknown is not offline. Let the print request decide. */
     }
 
-    setLamps(state);
-    settle(state.last);
-  };
+    if (!s.online) setStatus('printer is offline', true);
+    else if (!s.paper) setStatus('printer is out of paper', true);
+    else if (status.classList.contains('bad')) setStatus('');
+  }
 
-  /* Dark rather than stale: if the stream is down we do not know anything,
-     and the last thing we knew is a guess. */
-  events.onerror = () => setLamps({});
+  checkPrinter();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkPrinter();
+  });
 
   $('print').addEventListener('click', print);
 

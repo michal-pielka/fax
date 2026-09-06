@@ -198,7 +198,6 @@
   #tools button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   .body:focus, .body:focus-visible { outline: none; }
 
-  /* Only the button now: the lamps moved up under the paper they describe. */
   .bar {
     position: fixed;
     left: 0; right: 0; bottom: 0;
@@ -228,7 +227,7 @@
   .print:disabled { opacity: 0.4; cursor: default; }
   .print:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
-  /* Reserves its line whether or not there is a message, so the panel above
+  /* Reserves its line whether or not there is a message, so the paper above
      does not jump when one appears. */
   .status {
     min-height: 1.2em;
@@ -237,39 +236,6 @@
   }
 
   .status.bad { color: #a33; }
-
-  /* Monochrome on purpose: a green LED would be the one thing here that
-     could not have come out of the machine. */
-  .lamps {
-    display: flex;
-    gap: clamp(20px, 3.4vw, 40px);
-    font-size: clamp(15px, 2.05vw, 22px);
-    letter-spacing: 0.1em;
-  }
-
-  .lamp {
-    color: rgb(var(--shade) / 0.22);
-    white-space: nowrap;
-  }
-
-  .lamp::before {
-    content: "\25CB";            /* hollow circle */
-    margin-right: 0.45em;
-  }
-
-  .lamp.on {
-    color: var(--ink-dim);
-  }
-
-  .lamp.on::before {
-    content: "\25CF";            /* filled circle */
-  }
-
-  /* BUSY is the only lamp that means "right now", so the only one that
-     moves. Stepped, because a fade would read as a web app. */
-  .lamp.blink { animation: blink 1s steps(2, end) infinite; }
-
-  @keyframes blink { 50% { opacity: 0.25; } }
 
   /* Smooth, not stepped: a real stepper advances hundreds of microsteps per
      row, so the discreteness only ever read as stutter. */
