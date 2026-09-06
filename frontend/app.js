@@ -18,8 +18,37 @@
      switching one on switches the other off. */
   const UNDERLINES = UNDER | THICK;
 
-  /* One byte per character of ta.value, kept the same length at all times. */
+  /* One byte per character of ta.value, kept the same length at all times.
+     Raw: what was applied. What shows and what prints is effective(), below. */
   let styles = new Uint8Array(0);
+
+  const isSpace = (c) => c === ' ' || c === '\n';
+
+  /* Styles as they appear on paper. A space has no glyph, so a style on it is
+     a stray underline or a black cell: it keeps one only between two styled
+     characters on the same line, where it joins them. Newlines never do. */
+  function effective() {
+    const text = ta.value, out = new Uint8Array(styles);
+    let i = 0;
+
+    while (i < text.length) {
+      if (!isSpace(text[i])) { i++; continue; }
+
+      let j = i;
+      while (j < text.length && text[j] === ' ') j++;
+
+      /* A run of spaces from i to j. Interior if flanked, on this line, by
+         styled non-space characters on both sides. */
+      const before = i > 0 && text[i - 1] !== '\n' && styles[i - 1];
+      const after = j < text.length && text[j] !== '\n' && styles[j];
+      if (!(before && after)) out.fill(0, i, j);
+
+      if (j < text.length && text[j] === '\n') { out[j] = 0; j++; }
+      i = Math.max(j, i + 1);
+    }
+
+    return out;
+  }
 
   /* Only what the printer does. Anything else would look right here and
      silently vanish on paper. */
@@ -95,19 +124,18 @@
 
     const removed = oldT.length - p - s, inserted = newT.length - p - s;
 
+    /* Typing continues the style of the character before the caret, but
+       not across a space: the style ends with the word, which is how it
+       stops without a toggle. An explicit toggle overrides all of that. */
     let inherit = 0;
     if (pending !== null) inherit = pending;
     else if (removed > 0) inherit = styles[p];
-    else if (p > 0 && oldT[p - 1] !== '\n') inherit = styles[p - 1];
+    else if (p > 0 && !isSpace(oldT[p - 1])) inherit = styles[p - 1];
 
     const next = new Uint8Array(newT.length);
     next.set(styles.subarray(0, p), 0);
     next.fill(inherit, p, p + inserted);
     next.set(styles.subarray(p + removed), p + inserted);
-
-    /* A newline has no glyph, so it has no style: an inverted one would paint
-       a dark cell at the end of the row in the mirror. */
-    for (let i = p; i < p + inserted; i++) if (newT[i] === '\n') next[i] = 0;
 
     styles = next;
   }
@@ -118,14 +146,21 @@
     if (a === b) {
       const base = styleAtCaret();
       pending = base & t.bit ? base & ~t.bit : withTool(base, t);
+      /* Anchor the caret: pending lasts as long as edits keep happening here. */
+      last.start = last.end = a;
       syncTools();
       return;
     }
 
-    /* Newlines carry no style; they would otherwise make "all bold" false
-       for a selection that visibly is. */
-    let allOn = true;
-    for (let i = a; i < b; i++) if (ta.value[i] !== '\n' && !(styles[i] & t.bit)) { allOn = false; break; }
+    /* Spaces neither count towards "all on" nor matter when set: effective()
+       decides what they show. A selection of nothing but spaces is a no-op. */
+    let allOn = true, any = false;
+    for (let i = a; i < b; i++) {
+      if (isSpace(ta.value[i])) continue;
+      any = true;
+      if (!(styles[i] & t.bit)) { allOn = false; break; }
+    }
+    if (!any) return;
     for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : withTool(styles[i], t);
 
     render();
@@ -147,18 +182,18 @@
      same width, same wrapping, so its glyphs sit exactly under the invisible
      ones the caret moves through. */
   function render() {
-    const text = ta.value;
+    const text = ta.value, shown = effective();
     const frag = document.createDocumentFragment();
     let i = 0;
 
     while (i < text.length) {
       let j = i + 1;
-      while (j < text.length && styles[j] === styles[i]) j++;
+      while (j < text.length && shown[j] === shown[i]) j++;
 
       const run = text.slice(i, j);
-      if (styles[i]) {
+      if (shown[i]) {
         const span = document.createElement('span');
-        span.className = classesOf(styles[i]);
+        span.className = classesOf(shown[i]);
         span.textContent = run;
         frag.append(span);
       } else {
@@ -188,7 +223,13 @@
   function styleAtCaret() {
     if (pending !== null) return pending;
     const a = ta.selectionStart;
-    return a > 0 && ta.value[a - 1] !== '\n' ? styles[a - 1] : 0;
+    return a > 0 && !isSpace(ta.value[a - 1]) ? styles[a - 1] : 0;
+  }
+
+  /* Whether a selection has anything a style could show on. */
+  function selectionHasInk() {
+    for (let i = ta.selectionStart; i < ta.selectionEnd; i++) if (!isSpace(ta.value[i])) return true;
+    return false;
   }
 
   function syncTools() {
@@ -199,7 +240,7 @@
       if (a === b) on = !!(styleAtCaret() & t.bit);
       else {
         on = true;
-        for (let i = a; i < b; i++) if (ta.value[i] !== '\n' && !(styles[i] & t.bit)) { on = false; break; }
+        for (let i = a; i < b; i++) if (!isSpace(ta.value[i]) && !(styles[i] & t.bit)) { on = false; break; }
       }
       btn.setAttribute('aria-pressed', String(on));
     });
@@ -223,7 +264,7 @@
   }
 
   function placeTools() {
-    if (ta.selectionStart === ta.selectionEnd) { tools.classList.remove('on'); return; }
+    if (!selectionHasInk()) { tools.classList.remove('on'); return; }
     const r = selectionRect();
     if (!r) return;
     tools.classList.add('on');
@@ -250,6 +291,12 @@
   /* Edits whose outcome is known before they land are refused before they
      land: no rollback, nothing for the undo stack to see. */
   ta.addEventListener('beforeinput', (e) => {
+    /* A pending style is for typing at the spot it was set. If the caret is
+       anywhere else now -- moved by mouse, touch or arrow keys -- it is over.
+       Checked here rather than on selectionchange, which Chromium delivers
+       lazily enough to arrive after the next keystroke. */
+    if (pending !== null && (ta.selectionStart !== last.start || ta.selectionEnd !== last.end)) pending = null;
+
     let data = null;
     if (e.inputType === 'insertText') data = e.data ?? '';
     else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') data = '\n';
@@ -286,7 +333,8 @@
     }
 
     reconcile();
-    pending = null;
+    /* pending survives typing on purpose: it ends when the caret is moved
+       by anything other than the text it is styling (see selectionchange). */
     remember();
     render();
     syncTools();
@@ -294,12 +342,17 @@
   });
 
   ta.addEventListener('keydown', (e) => {
+    /* Moving the caret, even back to the same place, ends a pending style. */
+    if (/^(Arrow|Home$|End$|Page)/.test(e.key)) pending = null;
+
     const meta = e.metaKey || e.ctrlKey;
     if (meta && e.key === 'Enter') { e.preventDefault(); print(); return; }
     if (!meta) return;
     const tool = { b: 'bold', u: e.shiftKey ? 'thick' : 'under', i: 'invert' }[e.key.toLowerCase()];
     if (tool) { e.preventDefault(); applyTool(TOOLS.find(t => t.key === tool)); }
   });
+
+  ta.addEventListener('pointerdown', () => { pending = null; });
 
   /* The textarea scrolls to chase the caret even with the content fitting,
      by a pixel or two on some platforms; the mirror would not follow. */
@@ -310,19 +363,19 @@
   /* The server wants flat text plus character ranges, so each run of styled
      characters becomes one span. Newlines are never inside a run. */
   function document_() {
-    const text = ta.value;
+    const text = ta.value, shown = effective();
     const spans = [];
     let i = 0;
 
     while (i < text.length) {
-      if (!styles[i] || text[i] === '\n') { i++; continue; }
+      if (!shown[i]) { i++; continue; }
       let j = i + 1;
-      while (j < text.length && styles[j] === styles[i] && text[j] !== '\n') j++;
+      while (j < text.length && shown[j] === shown[i]) j++;
       const style = {};
-      if (styles[i] & BOLD) style.bold = true;
-      if (styles[i] & UNDER) style.underline = 1;
-      if (styles[i] & THICK) style.underline = 2;
-      if (styles[i] & INVERT) style.invert = true;
+      if (shown[i] & BOLD) style.bold = true;
+      if (shown[i] & UNDER) style.underline = 1;
+      if (shown[i] & THICK) style.underline = 2;
+      if (shown[i] & INVERT) style.invert = true;
       spans.push({ start: i, end: j, style });
       i = j;
     }
