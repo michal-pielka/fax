@@ -174,7 +174,14 @@
     opacity: 1;
   }
 
-  .body textarea::selection { color: transparent; }
+  /* A rule on ::selection replaces the native highlight entirely, so the
+     background must be given back. Translucent ink: the mirror's glyphs sit
+     underneath and have to stay readable through it. */
+  .body textarea::selection {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    background: rgb(var(--shade) / 0.18);
+  }
 
   /* One character revealed at a time by stepping the width, because
      `content` is not reliably animatable. Only while the placeholder shows. */
