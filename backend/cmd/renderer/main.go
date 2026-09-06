@@ -19,7 +19,8 @@ import (
 
 // maxRunes matches the gateway's, checked again rather than trusted: Render
 // assumes byte offsets are character positions, which holds only if validated.
-const maxRunes = 255
+// A full page is 9 rows of 32 columns plus the 8 newlines between them.
+const maxRunes = 296
 
 func main() {
 	addr := flag.String("addr", ":8081", "listen address")

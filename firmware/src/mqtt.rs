@@ -61,7 +61,7 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
             }
 
             // One topic subscribed, so this is a job. No chunk reassembly:
-            // raise the 255-character cap past ~3500 and receipts will split.
+            // raise the ~300-character cap past ~3500 and receipts will split.
             EventPayload::Received { topic, data, .. } => {
                 // No topic means a continuation chunk, which cannot happen
                 // at our sizes. Say so and drop it rather than reassemble.

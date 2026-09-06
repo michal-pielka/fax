@@ -29,7 +29,8 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	rendererURL := flag.String("renderer", "http://localhost:8081", "renderer service base URL")
 	dispatcherURL := flag.String("dispatcher", "http://localhost:8082", "dispatcher service base URL")
-	maxRunes := flag.Int("max-runes", 255, "longest document accepted; must match the renderer")
+	// 9 rows of 32 columns plus the 8 newlines between them: one full page.
+	maxRunes := flag.Int("max-runes", 296, "longest document accepted; must match the renderer")
 	logFormat := flag.String("log-format", "json", "log format: json or text")
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
 	flag.Parse()

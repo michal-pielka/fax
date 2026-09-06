@@ -20,9 +20,13 @@
     </div>
     <div class="divider" id="divTop"></div>
 
-    <div class="zone body" id="body" contenteditable="true"
-         spellcheck="false" autocorrect="off" autocapitalize="off"
-         aria-label="Your message"></div>
+    <!-- The textarea is the text; the mirror behind it is the same text with
+         bold and underline applied. Both wrap where the printer wraps. -->
+    <div class="zone body" id="body">
+      <pre class="mirror" id="mirror" aria-hidden="true"></pre>
+      <textarea id="text" spellcheck="false" autocorrect="off" autocapitalize="off"
+                autocomplete="off" aria-label="Your message" placeholder="start typing"></textarea>
+    </div>
 
     <div class="divider" id="divBot"></div>
     <div class="zone fixed">

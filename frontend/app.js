@@ -1,284 +1,307 @@
 (() => {
-  /* Read from CSS so --cols stays the single source of truth. */
-  const COLS = parseInt(getComputedStyle(document.documentElement)
-    .getPropertyValue('--cols'), 10);
+  /* Read from CSS so --cols and --rows stay the single source of truth. */
+  const cssInt = (name) => parseInt(getComputedStyle(document.documentElement).getPropertyValue(name), 10);
+  const COLS = cssInt('--cols'), ROWS = cssInt('--rows');
   const $ = (id) => document.getElementById(id);
-  const body = $('body'), roll = $('roll'), tools = $('tools'), status = $('status');
+  const ta = $('text'), mirror = $('mirror'), roll = $('roll'), tools = $('tools'), status = $('status');
   const printBtn = $('print');
 
   $('divTop').textContent = '-'.repeat(COLS);
   $('divBot').textContent = '-'.repeat(COLS);
 
+  /* The textarea holds the text and the browser owns editing: caret, selection,
+     undo, IME, mobile keyboards. This module owns only two things the textarea
+     cannot: a style per character, and the size of the paper. */
+  const BOLD = 1, UNDER = 2;
+
+  /* One byte per character of ta.value, kept the same length at all times. */
+  let styles = new Uint8Array(0);
+
   /* Only what the printer does. Anything else would look right here and
      silently vanish on paper. */
   const TOOLS = [
-    { key: 'bold',  label: 'B', title: 'Bold',      attr: 'bold' },
-    { key: 'under', label: 'U', title: 'Underline', attr: 'under' },
+    { key: 'bold',  label: 'B', title: 'Bold',      bit: BOLD },
+    { key: 'under', label: 'U', title: 'Underline', bit: UNDER },
   ];
 
-  const lineOf = (node) => {
-    let n = node;
-    while (n && n !== body) {
-      if (n.nodeType === 1 && n.classList.contains('ln')) return n;
-      n = n.parentNode;
+  /* ---- the paper ------------------------------------------------------ */
+
+  /* Rows a text occupies once the printer hard-wraps it at COLS. The mirror
+     and the textarea are styled to break in exactly the same places, so this
+     arithmetic is the layout, and nothing has to be measured. */
+  function rowsOf(text) {
+    let rows = 0;
+    for (const line of text.split('\n')) rows += Math.max(1, Math.ceil(line.length / COLS));
+    return rows;
+  }
+
+  const fits = (text) => rowsOf(text) <= ROWS;
+
+  /* The longest prefix of `insert` that fits at the selection. Used by paste,
+     which is the one edit that can be far too big to reject wholesale. */
+  function fitting(insert) {
+    const before = ta.value.slice(0, ta.selectionStart), after = ta.value.slice(ta.selectionEnd);
+    let lo = 0, hi = insert.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (fits(before + insert.slice(0, mid) + after)) lo = mid; else hi = mid - 1;
     }
-    return null;
-  };
-
-  function selectedLines() {
-    const sel = getSelection();
-    if (!sel.rangeCount) return [];
-    const r = sel.getRangeAt(0);
-    const all = [...body.children];
-    const a = lineOf(r.startContainer), b = lineOf(r.endContainer);
-    if (!a) return [];
-    const i = all.indexOf(a), j = b ? all.indexOf(b) : i;
-    return all.slice(Math.min(i, j), Math.max(i, j) + 1);
+    return insert.slice(0, lo);
   }
 
-  /* Never leave the caret in .body itself: typing there makes bare text
-     nodes for normalize() to clean up. */
-  function caretInto(line, atEnd) {
-    const r = document.createRange();
-    r.selectNodeContents(line);
-    r.collapse(!atEnd);
-    const s = getSelection();
-    s.removeAllRanges();
-    s.addRange(r);
+  /* ---- styles --------------------------------------------------------- */
+
+  /* Style toggled with nothing selected. It applies to what is typed next,
+     until the caret moves, the way a word processor's B button behaves. */
+  let pending = null;
+
+  /* The value and selection after the last edit we accounted for. */
+  let last = { text: '', start: 0, end: 0 };
+
+  function remember() {
+    last = { text: ta.value, start: ta.selectionStart, end: ta.selectionEnd };
   }
 
-  /* Per-line styling needs every child to be a real .ln. Strays are moved
-     into the previous line, not replaced, so the caret still resolves. */
-  function normalize() {
-    if (!body.firstChild) {
-      body.innerHTML = '<div class="ln"><br></div>';
-      caretInto(body.firstElementChild);
+  /* Reconcile styles after the textarea changed underneath us. Every edit a
+     textarea can make -- typing, deleting, paste, drop, IME, undo -- replaces
+     one contiguous range, so the old and new text differ in one place. Find
+     it, and give inserted characters the style they would have inherited. */
+  function reconcile() {
+    const oldT = last.text, newT = ta.value;
+    if (oldT === newT) return;
+
+    let p = 0;
+    const max = Math.min(oldT.length, newT.length);
+    while (p < max && oldT[p] === newT[p]) p++;
+
+    /* Repeated characters make the prefix ambiguous ("aa" -> "aaa"); the
+       caret sits right after whatever was inserted, so trust it over the
+       scan when the two disagree. */
+    const grew = newT.length - oldT.length;
+    if (grew > 0) p = Math.min(p, Math.max(0, ta.selectionEnd - grew));
+
+    let s = 0;
+    const maxS = Math.min(oldT.length - p, newT.length - p);
+    while (s < maxS && oldT[oldT.length - 1 - s] === newT[newT.length - 1 - s]) s++;
+
+    const removed = oldT.length - p - s, inserted = newT.length - p - s;
+
+    let inherit = 0;
+    if (pending !== null) inherit = pending;
+    else if (removed > 0) inherit = styles[p];
+    else if (p > 0 && oldT[p - 1] !== '\n') inherit = styles[p - 1];
+
+    const next = new Uint8Array(newT.length);
+    next.set(styles.subarray(0, p), 0);
+    next.fill(inherit, p, p + inserted);
+    next.set(styles.subarray(p + removed), p + inserted);
+    styles = next;
+  }
+
+  function applyTool(t) {
+    const a = ta.selectionStart, b = ta.selectionEnd;
+
+    if (a === b) {
+      const base = pending !== null ? pending : (a > 0 && ta.value[a - 1] !== '\n' ? styles[a - 1] : 0);
+      pending = base ^ t.bit;
+      syncTools();
       return;
     }
 
-    const sel = getSelection();
-    const r = sel.rangeCount ? sel.getRangeAt(0) : null;
-    const node = r && r.startContainer, off = r && r.startOffset;
-    let moved = false;
+    /* Newlines carry no style; they would otherwise make "all bold" false
+       for a selection that visibly is. */
+    let allOn = true;
+    for (let i = a; i < b; i++) if (ta.value[i] !== '\n' && !(styles[i] & t.bit)) { allOn = false; break; }
+    for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : styles[i] | t.bit;
 
-    [...body.childNodes].forEach(n => {
-      if (n.nodeType === 1 && n.classList.contains('ln')) return;
-
-      /* A block the browser made without our class is a line, not a stray.
-         Nesting it inside the previous line would make one .ln two rows
-         tall, and join its text to the line above without a newline. */
-      if (n.nodeType === 1 && (n.tagName === 'DIV' || n.tagName === 'P')) {
-        n.className = 'ln';
-        return;
-      }
-
-      let line = n.previousElementSibling;
-      if (!line || !line.classList.contains('ln')) {
-        line = document.createElement('div');
-        line.className = 'ln';
-        n.before(line);
-      }
-      const br = line.querySelector('br');
-      if (br) br.remove();
-      line.appendChild(n);
-      moved = true;
-    });
-
-    if (moved && node && body.contains(node)) {
-      try {
-        const nr = document.createRange();
-        nr.setStart(node, off);
-        nr.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(nr);
-      } catch { /* node no longer addressable; leave the caret alone */ }
-    }
+    render();
+    syncTools();
   }
+
+  /* ---- rendering ------------------------------------------------------ */
+
+  /* The mirror shows the styled text under a transparent textarea. Same font,
+     same width, same wrapping, so its glyphs sit exactly under the invisible
+     ones the caret moves through. */
+  function render() {
+    const text = ta.value;
+    const frag = document.createDocumentFragment();
+    let i = 0;
+
+    while (i < text.length) {
+      let j = i + 1;
+      while (j < text.length && styles[j] === styles[i]) j++;
+
+      const run = text.slice(i, j);
+      if (styles[i]) {
+        const span = document.createElement('span');
+        span.className = (styles[i] & BOLD ? 'b ' : '') + (styles[i] & UNDER ? 'u' : '');
+        span.textContent = run;
+        frag.append(span);
+      } else {
+        frag.append(run);
+      }
+      i = j;
+    }
+
+    /* A trailing newline needs something after it or the browser drops the
+       empty last row; the textarea itself does the same trick internally. */
+    if (text.endsWith('\n')) frag.append('​');
+
+    mirror.replaceChildren(frag);
+  }
+
+  /* ---- toolbar -------------------------------------------------------- */
 
   TOOLS.forEach(t => {
     const b = document.createElement('button');
     b.textContent = t.label; b.title = t.title; b.dataset.key = t.key;
+    /* mousedown, so the textarea keeps focus and its selection. */
     b.addEventListener('mousedown', e => e.preventDefault());
     b.addEventListener('click', () => applyTool(t));
     tools.append(b);
   });
 
-  let saved = [];
-
-  function applyTool(t) {
-    const lines = saved.length ? saved : selectedLines();
-    if (!lines.length) return;
-    const allOn = lines.every(l => l.dataset[t.attr] === '1');
-    lines.forEach(l => { if (allOn) delete l.dataset[t.attr]; else l.dataset[t.attr] = '1'; });
-    syncTools(lines);
+  function styleAtCaret() {
+    if (pending !== null) return pending;
+    const a = ta.selectionStart;
+    return a > 0 && ta.value[a - 1] !== '\n' ? styles[a - 1] : 0;
   }
 
-  function syncTools(lines) {
-    tools.querySelectorAll('button').forEach(b => {
-      const t = TOOLS.find(x => x.key === b.dataset.key);
-      b.setAttribute('aria-pressed', String(lines.every(l => l.dataset[t.attr] === '1')));
+  function syncTools() {
+    const a = ta.selectionStart, b = ta.selectionEnd;
+    tools.querySelectorAll('button').forEach(btn => {
+      const t = TOOLS.find(x => x.key === btn.dataset.key);
+      let on;
+      if (a === b) on = !!(styleAtCaret() & t.bit);
+      else {
+        on = true;
+        for (let i = a; i < b; i++) if (ta.value[i] !== '\n' && !(styles[i] & t.bit)) { on = false; break; }
+      }
+      btn.setAttribute('aria-pressed', String(on));
     });
   }
 
+  /* The selection lives in the textarea, which has no geometry API; the
+     mirror has identical layout, so measure the same range there. */
+  function selectionRect() {
+    const a = ta.selectionStart, b = ta.selectionEnd;
+    const range = document.createRange();
+    let at = 0, startSet = false;
+
+    const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const len = node.length;
+      if (!startSet && a <= at + len) { range.setStart(node, a - at); startSet = true; }
+      if (startSet && b <= at + len) { range.setEnd(node, b - at); return range.getBoundingClientRect(); }
+      at += len;
+    }
+    return null;
+  }
+
   function placeTools() {
-    const sel = getSelection(), lines = selectedLines();
-    if (!lines.length || sel.isCollapsed) { tools.classList.remove('on'); saved = []; return; }
-    saved = lines;
-    const r = sel.getRangeAt(0).getBoundingClientRect();
+    if (ta.selectionStart === ta.selectionEnd) { tools.classList.remove('on'); return; }
+    const r = selectionRect();
+    if (!r) return;
     tools.classList.add('on');
     const w = tools.offsetWidth;
     tools.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2 + scrollX)) + 'px';
     tools.style.top = (r.top + scrollY - tools.offsetHeight - 8) + 'px';
-    syncTools(lines);
+    syncTools();
   }
 
   document.addEventListener('selectionchange', () => {
-    if (document.activeElement === body) placeTools();
+    if (document.activeElement !== ta) return;
+    /* A moved caret ends a pending toggle; the edit it was for never came. */
+    if (ta.selectionStart !== last.start || ta.selectionEnd !== last.end) pending = null;
+    last.start = ta.selectionStart; last.end = ta.selectionEnd;
+    placeTools();
   });
 
-  /* Overflow depends on where text wraps, so it cannot be known in advance.
-     The edit lands, gets measured, and is rolled back if it did not fit. */
-  const atCapacity = () => body.scrollHeight > body.clientHeight;
-
-  /* Rows in use, from the rendered lines rather than their count: a wrapped
-     line takes two. Measured first-to-last, not scrollHeight, which never
-     reports less than the box itself. Every row is one line-height tall. */
-  const rowsUsed = () => {
-    const first = body.firstElementChild, last = body.lastElementChild;
-    if (!first) return 0;
-    const span = last.getBoundingClientRect().bottom - first.getBoundingClientRect().top;
-    return Math.round(span / parseFloat(getComputedStyle(body).lineHeight));
-  };
-  const ROWS = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--rows'), 10);
-
-  /* The caret is recorded as a line index plus an offset, because rolling back
-     replaces the nodes it used to point at. */
-  function caretMark() {
-    const s = getSelection();
-    if (!s.rangeCount) return null;
-    const r = s.getRangeAt(0);
-    const line = lineOf(r.startContainer);
-    return line ? { i: [...body.children].indexOf(line), off: r.startOffset } : null;
-  }
-
-  function caretRestore(mark) {
-    const line = body.children[mark.i];
-    if (!line) return;
-    const text = line.firstChild && line.firstChild.nodeType === 3 ? line.firstChild : null;
-    const node = text || line;
-    const max = text ? text.length : line.childNodes.length;
-    const r = document.createRange();
-    r.setStart(node, Math.min(mark.off, max));
-    r.collapse(true);
-    const s = getSelection();
-    s.removeAllRanges();
-    s.addRange(r);
-  }
-
-  let rollback = null;
-
-  body.addEventListener('beforeinput', (e) => {
-    /* A new line on a full page is refused before it happens. Unlike text,
-       which may or may not wrap, a line always costs a row, so this needs
-       no measuring after the fact and no rollback to get wrong. */
-    if (/^insert(Paragraph|LineBreak)$/.test(e.inputType) && rowsUsed() >= ROWS) {
-      e.preventDefault();
-      return;
-    }
-
-    const removing = /^(delete|history)/.test(e.inputType);
-    rollback = removing ? null : { html: body.innerHTML, caret: caretMark() };
+  document.addEventListener('mousedown', (e) => {
+    if (!tools.contains(e.target) && e.target !== ta) tools.classList.remove('on');
   });
 
-  body.addEventListener('input', () => {
-    normalize();
-    if (rollback && atCapacity()) {
-      body.innerHTML = rollback.html;
-      /* Replacing the markup drops the selection, and a browser left to
-         itself puts it at the start. The edit was refused, so the end of
-         the page is the least surprising place to be when the caret was
-         not recorded. */
-      if (rollback.caret) caretRestore(rollback.caret);
-      else caretInto(body.lastElementChild, true);
-    }
-    /* Browsers scroll a clipped box to chase the caret even with
-       overflow: hidden, which slides the top of the receipt out of view. */
-    body.scrollTop = 0;
-    setStatus('');
+  /* ---- editing -------------------------------------------------------- */
+
+  /* Edits whose outcome is known before they land are refused before they
+     land: no rollback, nothing for the undo stack to see. */
+  ta.addEventListener('beforeinput', (e) => {
+    let data = null;
+    if (e.inputType === 'insertText') data = e.data ?? '';
+    else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') data = '\n';
+    if (data === null) return;
+
+    const next = ta.value.slice(0, ta.selectionStart) + data + ta.value.slice(ta.selectionEnd);
+    if (!fits(next)) e.preventDefault();
   });
 
-  /* Plain text only, and trimmed to fit. The rollback above is
-     all-or-nothing, which on a phone silently ate most pastes. */
-  body.addEventListener('paste', (e) => {
+  /* Paste is the one edit routinely larger than the paper: trim it to fit
+     rather than refuse it, which on a phone silently ate most pastes. */
+  ta.addEventListener('paste', (e) => {
     e.preventDefault();
-
     const text = (e.clipboardData || window.clipboardData)?.getData('text/plain') || '';
     if (!text) return;
 
-    const before = { html: body.innerHTML, caret: caretMark() };
-
-    /* Insert the first n characters and report whether they fit. execCommand
-       is deprecated and still the only way to keep the undo stack. */
-    const fits = (n) => {
-      body.innerHTML = before.html;
-      if (before.caret) caretRestore(before.caret);
-      else caretInto(body.lastElementChild, true);
-
-      if (n) document.execCommand('insertText', false, text.slice(0, n));
-      normalize();
-
-      return !atCapacity();
-    };
-
-    if (!fits(text.length)) {
-      /* Largest prefix that still fits. About a dozen rebuilds of a nine-row
-         div, once, on a paste -- cheaper than it looks. */
-      let lo = 0, hi = text.length;
-
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (fits(mid)) lo = mid; else hi = mid - 1;
-      }
-
-      fits(lo);
-      setStatus('trimmed to fit the paper');
-    } else {
-      setStatus('');
+    const part = fitting(text);
+    /* execCommand is deprecated and still the only way to keep the undo
+       stack; it also fires input, so reconcile runs as for typing. */
+    if (!document.execCommand('insertText', false, part)) {
+      ta.setRangeText(part, ta.selectionStart, ta.selectionEnd, 'end');
+      ta.dispatchEvent(new Event('input'));
     }
 
-    body.scrollTop = 0;
+    setStatus(part.length < text.length ? 'trimmed to fit the paper' : '');
   });
 
-  body.addEventListener('keydown', (e) => {
+  ta.addEventListener('input', () => {
+    /* Anything that slipped past beforeinput -- IME, drop, autocorrect.
+       Rare, so a plain restore is acceptable here. */
+    if (!fits(ta.value)) {
+      ta.value = last.text;
+      ta.setSelectionRange(last.start, last.end);
+    }
+
+    reconcile();
+    pending = null;
+    remember();
+    render();
+    syncTools();
+    setStatus('');
+  });
+
+  ta.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
     if (meta && e.key === 'Enter') { e.preventDefault(); print(); return; }
     if (meta && e.key.toLowerCase() === 'b') { e.preventDefault(); applyTool(TOOLS[0]); return; }
     if (meta && e.key.toLowerCase() === 'u') { e.preventDefault(); applyTool(TOOLS[1]); return; }
   });
 
-  document.addEventListener('mousedown', (e) => {
-    if (!tools.contains(e.target) && !body.contains(e.target)) tools.classList.remove('on');
-  });
+  /* The textarea scrolls to chase the caret even with the content fitting,
+     by a pixel or two on some platforms; the mirror would not follow. */
+  ta.addEventListener('scroll', () => { ta.scrollTop = 0; });
 
-  /* The server wants flat text plus character ranges, so each styled line
-     becomes one span over its slice of the joined text. */
+  /* ---- printing ------------------------------------------------------- */
+
+  /* The server wants flat text plus character ranges, so each run of styled
+     characters becomes one span. Newlines are never inside a run. */
   function document_() {
-    const lines = [...body.children].map(l => l.textContent.replace(/ /g, ' '));
+    const text = ta.value;
     const spans = [];
-    let at = 0;
+    let i = 0;
 
-    [...body.children].forEach((l, i) => {
+    while (i < text.length) {
+      if (!styles[i] || text[i] === '\n') { i++; continue; }
+      let j = i + 1;
+      while (j < text.length && styles[j] === styles[i] && text[j] !== '\n') j++;
       const style = {};
-      if (l.dataset.bold) style.bold = true;
-      if (l.dataset.under) style.underline = true;
+      if (styles[i] & BOLD) style.bold = true;
+      if (styles[i] & UNDER) style.underline = true;
+      spans.push({ start: i, end: j, style });
+      i = j;
+    }
 
-      if (Object.keys(style).length && lines[i].length) {
-        spans.push({ start: at, end: at + lines[i].length, style });
-      }
-      at += lines[i].length + 1; // +1 for the newline that joins them
-    });
-
-    return { text: lines.join('\n'), ...(spans.length && { spans }) };
+    return { text, ...(spans.length && { spans }) };
   }
 
   function setStatus(msg, bad) {
@@ -352,18 +375,25 @@
     setTimeout(finish, seconds * 1000 + 250);
   }
 
+  function clear() {
+    ta.value = '';
+    styles = new Uint8Array(0);
+    pending = null;
+    remember();
+    render();
+  }
+
   function feed() {
     roll.classList.add('out');
 
     onceEnded('feed-out', () => {
-      body.innerHTML = '<div class="ln"><br></div>';
+      clear();
       roll.classList.remove('out');
       roll.classList.add('in');
 
       onceEnded('feed-in', () => roll.classList.remove('in'));
 
-      body.focus();
-      caretInto(body.firstElementChild);
+      ta.focus();
     });
   }
 
@@ -388,9 +418,8 @@
     if (document.visibilityState === 'visible') checkPrinter();
   });
 
-  $('print').addEventListener('click', print);
+  printBtn.addEventListener('click', print);
 
-  normalize();
-  body.focus();
-  caretInto(body.firstElementChild);
+  clear();
+  ta.focus();
 })();

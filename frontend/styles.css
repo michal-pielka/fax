@@ -114,43 +114,71 @@
   .fixed .big { font-size: 2em; line-height: 1.1; color: var(--ink); }
   .divider { text-align: center; white-space: pre; overflow: hidden; color: var(--ink-ghost); }
 
+  /* The editing area: a transparent textarea over a mirror of its text.
+     Everything about the two must match -- font, size, spacing, wrapping --
+     or the caret drifts away from the glyphs it is supposedly between. */
   .body {
+    position: relative;
     height: calc(var(--rows) * 1em * var(--line-height));
     overflow: hidden;
-    outline: none;
-    /* The printer hard-breaks at column 32 mid-word; browsers break on words.
-       Without `anywhere` the preview lies on exactly the inputs people notice. */
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    font-variant-ligatures: none;
-    caret-color: var(--ink);
-    /* Explicit for iOS, which will not offer the paste callout on a
-       contenteditable it thinks is unselectable. */
-    -webkit-user-select: text;
-    user-select: text;
-    /* Anchors the hint, which is positioned rather than laid out. */
-    position: relative;
   }
-  /* An empty line is <div class="ln"><br></div>, and a <br> child means it
-     is not :empty. Matching only :empty is why this never appeared. */
-  .body:empty::before,
-  .body:has(> .ln:only-child:empty)::before,
-  .body:has(> .ln:only-child > br:only-child)::before {
-    content: 'start typing';
-    /* Positioned, not laid out: in flow these sit either side of the line div
-       and each takes a row, pushing the caret down the page. */
+
+  .body textarea, .mirror {
     position: absolute;
-    left: 0;
-    top: 0;
-    color: rgb(var(--shade) / 0.32);
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font: inherit;
+    line-height: inherit;
+    letter-spacing: inherit;
+    font-variant-ligatures: none;
+    /* The printer breaks at column 32 whatever the character, spaces
+       included. break-spaces makes runs of spaces wrap like letters, and
+       break-all makes words split rather than move down a row. */
+    white-space: break-spaces;
+    word-break: break-all;
+    overflow: hidden;
+    overflow-wrap: normal;
+    -webkit-hyphens: none;
+    hyphens: none;
+  }
+
+  .mirror {
+    color: var(--ink);
     pointer-events: none;
   }
 
+  .body textarea {
+    display: block;
+    background: transparent;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: var(--ink);
+    resize: none;
+    outline: none;
+    appearance: none;
+    border-radius: 0;
+    /* Explicit for iOS, which will not offer the paste callout otherwise. */
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* The placeholder inherits the transparent fill above, so it needs its
+     own; `color` alone leaves it invisible in WebKit and Chromium. */
+  .body textarea::placeholder {
+    color: rgb(var(--shade) / 0.32);
+    -webkit-text-fill-color: rgb(var(--shade) / 0.32);
+    opacity: 1;
+  }
+
+  .body textarea::selection { color: transparent; }
+
   /* One character revealed at a time by stepping the width, because
-     `content` is not reliably animatable. */
-  .body:empty::after,
-  .body:has(> .ln:only-child:empty)::after,
-  .body:has(> .ln:only-child > br:only-child)::after {
+     `content` is not reliably animatable. Only while the placeholder shows. */
+  .body:has(> textarea:placeholder-shown)::after {
     content: '...';
     position: absolute;
     top: 0;
@@ -169,9 +197,10 @@
      what makes it land on all three dots rather than stopping at two. */
   @keyframes hint-dots { from { width: 0; } }
 
-  .ln { min-height: calc(1em * var(--line-height)); }
-  .ln[data-bold="1"] { font-weight: 700; text-shadow: 0.4px 0 0 currentColor; }
-  .ln[data-under="1"] { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  /* Faux bold by shadow, never font-weight: a heavier face could change the
+     advance width and pull the mirror out from under the caret. */
+  .mirror .b { text-shadow: 0.5px 0 0 currentColor; }
+  .mirror .u { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 
   .pop {
     position: absolute; z-index: 50; display: none;
@@ -196,7 +225,6 @@
   /* The caret is the focus indicator on the paper; an outline round the
      editable region is the one bit of chrome that cannot be dismissed. */
   #tools button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .body:focus, .body:focus-visible { outline: none; }
 
   .bar {
     position: fixed;
