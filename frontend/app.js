@@ -63,6 +63,15 @@
 
     [...body.childNodes].forEach(n => {
       if (n.nodeType === 1 && n.classList.contains('ln')) return;
+
+      /* A block the browser made without our class is a line, not a stray.
+         Nesting it inside the previous line would make one .ln two rows
+         tall, and join its text to the line above without a newline. */
+      if (n.nodeType === 1 && (n.tagName === 'DIV' || n.tagName === 'P')) {
+        n.className = 'ln';
+        return;
+      }
+
       let line = n.previousElementSibling;
       if (!line || !line.classList.contains('ln')) {
         line = document.createElement('div');
@@ -131,6 +140,17 @@
      The edit lands, gets measured, and is rolled back if it did not fit. */
   const atCapacity = () => body.scrollHeight > body.clientHeight;
 
+  /* Rows in use, from the rendered lines rather than their count: a wrapped
+     line takes two. Measured first-to-last, not scrollHeight, which never
+     reports less than the box itself. Every row is one line-height tall. */
+  const rowsUsed = () => {
+    const first = body.firstElementChild, last = body.lastElementChild;
+    if (!first) return 0;
+    const span = last.getBoundingClientRect().bottom - first.getBoundingClientRect().top;
+    return Math.round(span / parseFloat(getComputedStyle(body).lineHeight));
+  };
+  const ROWS = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--rows'), 10);
+
   /* The caret is recorded as a line index plus an offset, because rolling back
      replaces the nodes it used to point at. */
   function caretMark() {
@@ -158,6 +178,14 @@
   let rollback = null;
 
   body.addEventListener('beforeinput', (e) => {
+    /* A new line on a full page is refused before it happens. Unlike text,
+       which may or may not wrap, a line always costs a row, so this needs
+       no measuring after the fact and no rollback to get wrong. */
+    if (/^insert(Paragraph|LineBreak)$/.test(e.inputType) && rowsUsed() >= ROWS) {
+      e.preventDefault();
+      return;
+    }
+
     const removing = /^(delete|history)/.test(e.inputType);
     rollback = removing ? null : { html: body.innerHTML, caret: caretMark() };
   });
@@ -166,7 +194,12 @@
     normalize();
     if (rollback && atCapacity()) {
       body.innerHTML = rollback.html;
+      /* Replacing the markup drops the selection, and a browser left to
+         itself puts it at the start. The edit was refused, so the end of
+         the page is the least surprising place to be when the caret was
+         not recorded. */
       if (rollback.caret) caretRestore(rollback.caret);
+      else caretInto(body.lastElementChild, true);
     }
     /* Browsers scroll a clipped box to chase the caret even with
        overflow: hidden, which slides the top of the receipt out of view. */
