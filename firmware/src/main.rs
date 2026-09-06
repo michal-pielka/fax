@@ -7,11 +7,8 @@ mod printer;
 mod time;
 mod wifi;
 
-use std::sync::mpsc::RecvTimeoutError;
-
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::hal::uart::UartDriver;
 use esp_idf_svc::mqtt::client::{EspMqttClient, QoS};
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::EspError;
@@ -55,34 +52,26 @@ fn main() -> Result<(), EspError> {
 
     let (mut client, events) = mqtt::connect()?;
 
-    // What we last told the broker. True to start, so a printer that never
-    // answers behaves exactly as it did before any of this existed.
-    let mut paper = true;
-
     // All client and printer work happens here; doing it in the callback
-    // deadlocks (see mqtt.rs). The timeout is where the paper poll lives.
-    loop {
-        match events.recv_timeout(config::PAPER_POLL) {
-            Ok(Event::Connected) => {
+    // deadlocks (see mqtt.rs). recv returns Err only when the callback's
+    // sender is gone, and the client is gone with it.
+    while let Ok(event) = events.recv() {
+        match event {
+            Event::Connected => {
                 log::info!("connected to broker");
 
                 client.subscribe(config::JOB_TOPIC, QoS::AtLeastOnce)?;
+                client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, config::ONLINE)?;
 
-                // Measured before announcing: a guess corrected a moment later
-                // is how the gateway rejects a job that would have printed.
-                paper = printer::has_paper(&uart).unwrap_or_else(|| {
-                    log::warn!("printer will not report paper -- assuming loaded");
-                    true
-                });
-                client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, state(paper))?;
-
-                log::info!("subscribed, announced online, paper {paper}");
+                log::info!("subscribed, announced online");
             }
 
-            Ok(Event::Job { id, payload }) => {
-                // Refuse rather than blast bytes at a dead engine: the
-                // gateway's view of the paper can be seconds stale.
-                if !paper {
+            Event::Job { id, payload } => {
+                // Measured now, not cached: a browser is waiting on this ack,
+                // and a stale answer either refuses a job that would have
+                // printed or blasts bytes at an empty slot. Silence is not
+                // "no paper" -- see has_paper -- so an unanswered query prints.
+                if printer::has_paper(&uart) == Some(false) {
                     log::warn!("job {id} refused, no paper");
                     ack(&mut client, &id, config::ACK_NO_PAPER)?;
                     continue;
@@ -91,39 +80,19 @@ fn main() -> Result<(), EspError> {
                 log::info!("printing {} bytes for {id}", payload.len());
                 printer::write(&uart, &payload)?;
 
-                // One reply, two answers: it finished, and this is the paper
-                // afterwards.
-                match printer::wait_done(&uart, config::PRINT_TIMEOUT) {
-                    Some(now) => {
-                        log::info!("printed {id}");
-                        ack(&mut client, &id, config::ACK_OK)?;
-                        set_paper(&mut client, now, &mut paper)?;
-                    }
-
-                    None => {
-                        // It may well have printed; we cannot say so.
-                        log::warn!("no confirmation for {id}");
-                        ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
-                    }
+                if printer::wait_done(&uart, config::PRINT_TIMEOUT) {
+                    log::info!("printed {id}");
+                    ack(&mut client, &id, config::ACK_OK)?;
+                } else {
+                    // It may well have printed; we cannot say so.
+                    log::warn!("no confirmation for {id}");
+                    ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
                 }
             }
-
-            Err(RecvTimeoutError::Timeout) => poll_paper(&mut client, &uart, &mut paper)?,
-
-            // The callback's sender is gone, so the client is gone with it.
-            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
 
     Ok(())
-}
-
-fn state(paper: bool) -> &'static [u8] {
-    if paper {
-        config::ONLINE
-    } else {
-        config::NO_PAPER
-    }
 }
 
 /// Publish the ack for one job. Not retained: a retained ack would be
@@ -131,35 +100,6 @@ fn state(paper: bool) -> &'static [u8] {
 fn ack(client: &mut EspMqttClient<'_>, id: &str, payload: &[u8]) -> Result<(), EspError> {
     let topic = format!("{}/{}", config::ACK_TOPIC, id);
     client.publish(&topic, QoS::AtLeastOnce, false, payload)?;
-
-    Ok(())
-}
-
-/// Ask about the paper and tell the broker. Used on the idle tick; after a job
-/// the answer arrives with the completion instead, so no second question.
-fn poll_paper(
-    client: &mut EspMqttClient<'_>,
-    uart: &UartDriver,
-    known: &mut bool,
-) -> Result<(), EspError> {
-    // Silence is not "no paper" -- see has_paper -- so keep the last answer.
-    let Some(now) = printer::has_paper(uart) else {
-        return Ok(());
-    };
-
-    set_paper(client, now, known)
-}
-
-/// Publish a paper *change* only: a retained publish every five seconds is
-/// noise the broker keeps forever. The connect arm publishes unconditionally.
-fn set_paper(client: &mut EspMqttClient<'_>, now: bool, known: &mut bool) -> Result<(), EspError> {
-    if now == *known {
-        return Ok(());
-    }
-
-    *known = now;
-    log::info!("paper {}", if now { "loaded" } else { "OUT" });
-    client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, state(now))?;
 
     Ok(())
 }

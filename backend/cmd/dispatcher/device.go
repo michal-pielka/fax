@@ -31,11 +31,12 @@ var (
 // timeout must in turn exceed this, or the request ends before the answer.
 const ackTimeout = 7 * time.Second
 
-// State is what the device last told us. The zero value is offline with no
-// paper: until it says otherwise, assume nothing can be printed.
+// State is what the device last told us: the retained message it publishes on
+// connect, or the last will the broker publishes when it vanishes. The zero
+// value is offline, so until it says otherwise nothing can be printed. Paper is
+// not here on purpose: the firmware measures it per job and answers in the ack.
 type State struct {
 	Online bool `json:"online"`
-	Paper  bool `json:"paper"`
 }
 
 // Printer is the half of Device the handlers use, so they can be tested
@@ -185,7 +186,7 @@ func (d *Device) onState(_ mqtt.Client, m mqtt.Message) {
 		return
 	}
 
-	d.log.Info("device state", "online", s.Online, "paper", s.Paper)
+	d.log.Info("device state", "online", s.Online)
 	d.setState(s)
 }
 
@@ -237,16 +238,13 @@ func (d *Device) State() State {
 }
 
 // Publish sends one job and returns once the firmware has answered for it.
-// nil means the printer took the bytes and reported paper; the errors above
-// say what stopped it. The printer is claimed for the whole exchange.
+// nil means the printer took the bytes with paper in; the errors above say
+// what stopped it. The printer is claimed for the whole exchange.
 func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
-	st := d.State()
-
-	switch {
-	case !st.Online:
+	// The one check made here: an offline device would cost the caller the
+	// full ackTimeout to learn what the last will already says.
+	if !d.State().Online {
 		return ErrOffline
-	case !st.Paper:
-		return ErrNoPaper
 	}
 
 	// Before the publish, not after: the printer answers in milliseconds, and
@@ -303,8 +301,7 @@ func (d *Device) awaitAck(id string, acks <-chan ack) error {
 		case a.OK:
 			return nil
 		case a.Error == reasonNoPaper:
-			// The firmware measured this just now, so it is fresher than the
-			// retained state that let the job through.
+			// Measured by the firmware right before it would have printed.
 			return ErrNoPaper
 		case a.Error == reasonNoConfirmation:
 			return ErrNoConfirmation

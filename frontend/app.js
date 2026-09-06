@@ -335,8 +335,8 @@
   }
 
   /* Asked once on arrival and again when the tab comes back, not polled:
-     the print request itself is the authority, and answers offline or no
-     paper on its own. This only saves typing a message into a dead machine. */
+     the print request itself is the authority, and answers offline or out
+     of paper on its own. This only saves typing into a machine that is off. */
   async function checkPrinter() {
     let s;
 
@@ -347,8 +347,7 @@
     }
 
     if (!s.online) setStatus('printer is offline', true);
-    else if (!s.paper) setStatus('printer is out of paper', true);
-    else if (status.classList.contains('bad')) setStatus('');
+    else if (status.textContent === 'printer is offline') setStatus('');
   }
 
   checkPrinter();

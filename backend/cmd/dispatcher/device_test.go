@@ -26,8 +26,8 @@ func TestNewTopics(t *testing.T) {
 func TestZeroStateIsUnprintable(t *testing.T) {
 	var s State
 
-	if s.Online || s.Paper {
-		t.Fatalf("zero State = %+v, want offline with no paper", s)
+	if s.Online {
+		t.Fatalf("zero State = %+v, want offline", s)
 	}
 }
 
@@ -38,9 +38,9 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Errorf("fresh Device reports online")
 	}
 
-	d.setState(State{Online: true, Paper: true})
+	d.setState(State{Online: true})
 
-	if got := d.State(); !got.Online || !got.Paper {
+	if got := d.State(); !got.Online {
 		t.Errorf("State() = %+v after setState", got)
 	}
 }

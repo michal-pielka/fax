@@ -221,7 +221,7 @@ func TestRejectionsAreLogged(t *testing.T) {
 }
 
 func TestState(t *testing.T) {
-	d := &fakeDispatcher{state: State{Online: true, Paper: false}}
+	d := &fakeDispatcher{state: State{Online: true}}
 
 	rec := do(t, newAPI(&fakeRenderer{}, d), http.MethodGet, "/api/state", "")
 
@@ -234,8 +234,8 @@ func TestState(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	if !got.Online || got.Paper {
-		t.Errorf("state = %+v, want online without paper", got)
+	if !got.Online {
+		t.Errorf("state = %+v, want online", got)
 	}
 }
 

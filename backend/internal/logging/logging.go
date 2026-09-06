@@ -142,8 +142,8 @@ func (w *recorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// Unwrap lets http.ResponseController reach the real writer. Without it Flush
-// and SetWriteDeadline fail, and every event stream dies on its first send.
+// Unwrap lets http.ResponseController reach the real writer, so Flush and
+// SetWriteDeadline work through this wrapper rather than failing silently.
 func (w *recorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // Truncate bounds a string from elsewhere, so whatever sent it does not decide

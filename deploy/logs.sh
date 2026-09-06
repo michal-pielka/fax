@@ -61,8 +61,9 @@ trace)
 			| map("\(.key)=\(.value)") | join(" "))"'
 	;;
 prints)
-	# The record of what has actually been sent to the paper.
-	stream | jq -r 'select(.msg == "print accepted")
+	# The record of what has actually been sent to the paper: logged only
+	# after the firmware acknowledged the job.
+	stream | jq -r 'select(.msg == "printed")
 		| "\(.time[0:19] | sub("T"; " "))  \(.trace[0:8])  \(.chars)c  \(.text)"'
 	;;
 errors)

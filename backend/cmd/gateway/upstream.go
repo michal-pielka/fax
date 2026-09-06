@@ -37,7 +37,6 @@ type printRequest struct {
 // State mirrors the dispatcher's; the zero value is the safe answer.
 type State struct {
 	Online bool `json:"online"`
-	Paper  bool `json:"paper"`
 }
 
 // upstreamError keeps the status an internal service replied with: some

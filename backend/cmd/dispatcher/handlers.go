@@ -66,8 +66,8 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case err == nil:
-		// 200: the printer has the bytes and answered with paper in. The
-		// paper itself is still moving for a few seconds after this.
+		// 200: the printer has the bytes and had paper when it took them.
+		// The paper itself is still moving for a few seconds after this.
 		writeJSON(w, http.StatusOK, map[string]string{"id": req.ID, "status": "printed"})
 
 	case errors.Is(err, ErrNoPaper), errors.Is(err, ErrBusy):

@@ -50,7 +50,7 @@ func do(t *testing.T, p Printer, method, path, body string) *httptest.ResponseRe
 const printBody = `{"id":"abc123","payload":"G0BoaRtkAw=="}`
 
 func TestPrintPublishes(t *testing.T) {
-	p := &fakePrinter{state: State{Online: true, Paper: true}}
+	p := &fakePrinter{state: State{Online: true}}
 
 	rec := do(t, p, http.MethodPost, "/internal/print", printBody)
 
@@ -118,7 +118,7 @@ func TestPrintRejectsBadRequests(t *testing.T) {
 
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
-			p := &fakePrinter{state: State{Online: true, Paper: true}}
+			p := &fakePrinter{state: State{Online: true}}
 
 			rec := do(t, p, http.MethodPost, "/internal/print", body)
 
@@ -135,7 +135,7 @@ func TestPrintRejectsBadRequests(t *testing.T) {
 }
 
 func TestState(t *testing.T) {
-	rec := do(t, &fakePrinter{state: State{Online: true, Paper: false}},
+	rec := do(t, &fakePrinter{state: State{Online: true}},
 		http.MethodGet, "/internal/state", "")
 
 	if rec.Code != http.StatusOK {
@@ -147,8 +147,8 @@ func TestState(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	if !got.Online || got.Paper {
-		t.Errorf("state = %+v, want online without paper", got)
+	if !got.Online {
+		t.Errorf("state = %+v, want online", got)
 	}
 }
 

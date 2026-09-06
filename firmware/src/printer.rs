@@ -41,7 +41,7 @@ pub fn write(uart: &UartDriver, data: &[u8]) -> Result<(), EspError> {
 }
 
 /// Ask whether the printer has paper. `None` is "did not answer", not "no
-/// paper". DLE EOT 4 is real-time, so it is safe to ask mid-job.
+/// paper". DLE EOT 4 is real-time: the printer answers at once, even mid-job.
 pub fn has_paper(uart: &UartDriver) -> Option<bool> {
     // Anything already buffered would be read as this query's reply.
     uart.clear_rx().ok()?;
@@ -70,22 +70,21 @@ pub fn has_paper(uart: &UartDriver) -> Option<bool> {
     Some(status & 0b0110_0000 == 0)
 }
 
-/// Wait for the printer to finish, learning the paper state on the way.
-/// `None` means it never came back: out of paper mid-job, jammed, or silent.
-pub fn wait_done(uart: &UartDriver, timeout: Duration) -> Option<bool> {
-    write(uart, &[0x1D, 0x72, 0x01]).ok()?;
+/// Wait for the printer to answer for the job just written. `false` means it
+/// never did: jammed, unplugged, or silent. The answer arrives once the bytes
+/// have been parsed, which on this printer is well before the paper stops.
+pub fn wait_done(uart: &UartDriver, timeout: Duration) -> bool {
+    if write(uart, &[0x1D, 0x72, 0x01]).is_err() {
+        return false;
+    }
 
     let mut buf = [0u8; 1];
-    if uart
-        .read(
-            &mut buf,
-            TickType::new_millis(timeout.as_millis() as u64).ticks(),
-        )
-        .ok()?
-        != 1
-    {
-        return None;
-    }
+    let Ok(1) = uart.read(
+        &mut buf,
+        TickType::new_millis(timeout.as_millis() as u64).ticks(),
+    ) else {
+        return false;
+    };
 
     let status = buf[0];
 
@@ -93,9 +92,8 @@ pub fn wait_done(uart: &UartDriver, timeout: Duration) -> Option<bool> {
     // defined, and this printer answers 0x00 with paper and 0x0c without.
     if status & 0b1111_0000 != 0 {
         log::warn!("printer answered {status:#04x}, not a paper status");
-        return None;
+        return false;
     }
 
-    // Bits 2 and 3 are the paper-end sensor.
-    Some(status & 0b0000_1100 == 0)
+    true
 }
