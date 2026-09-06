@@ -21,7 +21,7 @@ services:
       SITE_ADDRESS: "fax.pielka.sh"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./web:/srv/web:ro
+      - ./frontend:/srv/web:ro
       - caddy-data:/data
     depends_on: [gateway]
 
