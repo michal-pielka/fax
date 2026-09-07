@@ -213,9 +213,13 @@
     /* The reverse key's letter is drawn by CSS inside a filled cell. */
     if (t.key !== 'invert') label.textContent = t.label;
     b.append(label);
-    /* mousedown, so the textarea keeps focus and its selection. */
+    /* A key must not move focus: if the paper is being written on it keeps
+       the caret and selection, and if it is not, pressing a key must not
+       open a phone's keyboard. pointerdown covers touch, where cancelling
+       mousedown alone comes too late. Nothing here ever calls focus(). */
+    b.addEventListener('pointerdown', e => e.preventDefault());
     b.addEventListener('mousedown', e => e.preventDefault());
-    b.addEventListener('click', () => { applyTool(t); ta.focus(); });
+    b.addEventListener('click', () => applyTool(t));
     keys.append(b);
   });
 
