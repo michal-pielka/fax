@@ -58,17 +58,24 @@
     background-attachment: fixed;
     color: var(--ink);
     font-family: 'VT323', ui-monospace, monospace;
-    /* `margin: auto` on the child, not `align-items`: it centres on both axes
-       and still scrolls rather than clipping a tall receipt. */
+    /* A column: an empty band, the receipt with its panel, and a band of the
+       same height holding the status line. Two equal bands keep the receipt
+       centred and put the status halfway between the keys and the bottom. */
     display: flex;
+    flex-direction: column;
     padding: 2.5rem 1rem;
     -webkit-font-smoothing: antialiased;
   }
 
-  /* The receipt and the panel that describes it, as one centred column.
-     margin: auto moved up here from .roll so the two travel together. */
+  /* Both bands share the free space equally and only that: min-height 0 so
+     a message can never make the lower band, and so the receipt, move. When
+     the bands are shorter than a line -- a phone with its keyboard up -- the
+     text overflows the band rather than resizing it. */
+  body::before { content: ''; flex: 1 1 0; min-height: 0; }
+
+  /* The receipt and the panel that describes it, as one centred column. */
   .stack {
-    margin: auto;
+    margin: 0 auto;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -273,11 +280,18 @@
   .keys .invert span { background: currentColor; padding: 0 0.3em; line-height: 1.15; }
   .keys .invert span::after { content: "A"; color: var(--paper); }
 
-  /* Reserves its line whether or not there is a message, so the paper above
-     does not jump when one appears. */
+  /* The lower band. It has its height whether or not there is a message,
+     so the paper above does not move when one appears. */
   .status {
-    min-height: 1.2em;
-    font-size: clamp(13px, 1.5vw, 16px);
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+    /* The paper's own type size, twice the panel's: readable from the
+       distance a receipt is held at, without shouting on a phone. */
+    font-size: var(--font-size);
+    line-height: 1.1;
+    text-align: center;
     color: var(--ink-dim);
   }
 
