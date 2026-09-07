@@ -4,7 +4,6 @@
   const COLS = cssInt('--cols'), ROWS = cssInt('--rows');
   const $ = (id) => document.getElementById(id);
   const ta = $('text'), mirror = $('mirror'), roll = $('roll'), keys = $('keys'), status = $('status');
-  const printBtn = $('print');
 
   $('divTop').textContent = '-'.repeat(COLS);
   $('divBot').textContent = '-'.repeat(COLS);
@@ -292,13 +291,13 @@
     remember();
     render();
     syncKeys();
-    setStatus('');
+    setStatus(hint());
   });
 
   ta.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
     if (!meta) return;
-    if (e.key === 'Enter') { e.preventDefault(); print(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); if (phase === 'rest') submit(); return; }
     const tool = { b: 'bold', u: 'under', i: 'invert' }[e.key.toLowerCase()];
     if (tool) { e.preventDefault(); applyTool(TOOLS.find(t => t.key === tool)); }
   });
@@ -307,7 +306,7 @@
      by a pixel or two on some platforms; the mirror would not follow. */
   ta.addEventListener('scroll', () => { ta.scrollTop = 0; });
 
-  /* ---- printing ------------------------------------------------------- */
+  /* ---- printing: slide the receipt off the top ------------------------ */
 
   /* The server wants flat text plus character ranges, so each run of styled
      characters becomes one span. */
@@ -336,19 +335,141 @@
     status.classList.toggle('bad', !!bad);
   }
 
-  let printing = false;
+  /* The only instruction on the page, and only once there is something to
+     print. Replaced by whatever happens next. */
+  const hint = () => (ta.value.trim() ? 'slide the receipt up to print' : '');
 
-  /* One request, one answer. The server holds the connection until the
-     printer has taken the bytes, so a 200 means the paper is moving. */
-  async function print() {
-    if (printing || roll.classList.contains('out')) return;
+  /* There is no button. The receipt is picked up by its frame -- anything but
+     the writing area -- and pulled up. Past a line near the top of the window
+     it is a print job and flies off; short of it, it springs back. A quick
+     flick counts too, since its momentum would have carried it there. */
+  const PRINT_LINE = 0.3;       // this much of the receipt above the window's top
+  const EDGE = 24;              // px from the window's top where a release is a push through
+  const FLICK = -900;           // px/s upward that counts as a throw
+  const MOMENTUM = 0.22;        // seconds of travel credited to a throw
+  const STIFFNESS = 260;        // the spring home, and the spring down from above
+  const DAMPING = 24;           // under critical (32), so it lands with a small bounce
+  const THRUST = 6000;          // px/s^2 upward once it is on its way out
+  const RUBBER = 28;            // px it can be pulled down before it stops giving
 
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+
+  let y = 0, v = 0;             // offset from rest (px, up is negative) and velocity (px/s)
+  let phase = 'rest';           // rest | drag | settle | fly | gone | arrive
+  let frame = null, lastT = 0;
+  let flown = null;             // resolves once the receipt has left the window
+
+  const place = () => { roll.style.transform = y ? `translate3d(0, ${y}px, 0)` : ''; };
+
+  /* One integrator for every motion, semi-implicit Euler at the frame rate.
+     Motion is defined by state, not by named animations, so a release at any
+     point continues from exactly where the hand left it. */
+  function loop(t) {
+    frame = null;
+    const dt = Math.min((t - lastT) / 1000, 0.032);
+    lastT = t;
+
+    if (phase === 'settle' || phase === 'arrive') {
+      v += (-STIFFNESS * y - DAMPING * v) * dt;
+      y += v * dt;
+      if (reduced.matches || (Math.abs(y) < 0.5 && Math.abs(v) < 8)) { y = 0; v = 0; phase = 'rest'; }
+    } else if (phase === 'fly') {
+      v -= THRUST * dt;
+      y += v * dt;
+      if (reduced.matches) y = -innerHeight * 2;
+      if (roll.getBoundingClientRect().bottom < -8) { phase = 'gone'; flown?.(); flown = null; }
+    }
+
+    place();
+    if (phase !== 'rest' && phase !== 'gone') schedule();
+  }
+
+  function schedule() {
+    if (frame !== null) return;
+    lastT = performance.now();
+    frame = requestAnimationFrame(loop);
+  }
+
+  let drag = null;
+
+  roll.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.target.closest('.body') || e.target.closest('.keys')) return;
+    if (phase === 'fly' || phase === 'gone' || phase === 'arrive') return;
+
+    /* No default: the press must not start a text selection, and must not
+       take focus from the writing area. */
+    e.preventDefault();
+    roll.setPointerCapture(e.pointerId);
+    if (frame !== null) { cancelAnimationFrame(frame); frame = null; }
+
+    drag = { id: e.pointerId, y0: y, startY: e.clientY, lastY: y, lastT: e.timeStamp };
+    phase = 'drag';
+    v = 0;
+    roll.classList.add('dragging');
+  });
+
+  roll.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+
+    const raw = drag.y0 + (e.clientY - drag.startY);
+    /* Up follows the hand. Down gives a little, then stops: there is nowhere
+       to go that way, and the resistance says so. */
+    y = raw < 0 ? raw : RUBBER * (1 - Math.exp(-raw / (RUBBER * 2)));
+
+    const dt = (e.timeStamp - drag.lastT) / 1000;
+    if (dt > 0) v = 0.5 * v + 0.5 * (y - drag.lastY) / dt;
+    drag.lastY = y;
+    drag.lastT = e.timeStamp;
+
+    place();
+  });
+
+  function release(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+
+    /* A hand that paused before letting go has no momentum, whatever the
+       last move said. */
+    if (e.timeStamp - drag.lastT > 90) v = 0;
+    drag = null;
+    roll.classList.remove('dragging');
+
+    const r = roll.getBoundingClientRect();
+    const line = -PRINT_LINE * r.height;
+    const thrown = v < FLICK && r.top + v * MOMENTUM < line;
+    /* Held by its top edge, the receipt cannot get far out before the hand
+       runs into the top of the window. Letting go there is pushing it
+       through, whatever fraction has crossed. */
+    const pushed = e.type !== 'pointercancel' && e.clientY < EDGE;
+
+    if (r.top < line || thrown || pushed) submit();
+    else { phase = 'settle'; schedule(); }
+  }
+
+  roll.addEventListener('pointerup', release);
+  roll.addEventListener('pointercancel', release);
+  /* A capture lost without an up -- the browser took the pointer for
+     itself -- ends the drag the same way. */
+  roll.addEventListener('lostpointercapture', (e) => { if (drag) release({ ...e, type: 'pointercancel', clientY: Infinity }); });
+
+  /* Send the job and let the receipt go. The request and the flight run
+     together; whichever finishes last decides when the next sheet arrives,
+     so the paper is never swapped in front of someone's eyes. */
+  async function submit() {
     const doc = document_();
-    if (!doc.text.trim()) { setStatus('nothing to print', true); return; }
+    if (!doc.text.trim()) {
+      setStatus('nothing to print', true);
+      phase = 'settle';
+      schedule();
+      return;
+    }
 
-    printing = true;
-    printBtn.disabled = true;
+    phase = 'fly';
+    v = Math.min(v, -1400);
+    const gone = new Promise(resolve => { flown = resolve; });
+    schedule();
     setStatus('printing...');
+
+    let ok = false, message = '';
 
     try {
       const res = await fetch('/api/print', {
@@ -357,48 +478,40 @@
         body: JSON.stringify(doc),
       });
 
-      if (!res.ok) {
-        /* Does not clear the editor: with no queue behind it, a failed send
-           means the words exist only here. */
+      if (res.ok) ok = true;
+      else {
         const { error } = await res.json().catch(() => ({}));
-        setStatus(error || `failed (${res.status})`, true);
-        return;
+        message = error || `failed (${res.status})`;
       }
-
-      setStatus('printed');
-      feed();
     } catch {
-      setStatus('could not reach the printer', true);
-    } finally {
-      printing = false;
-      printBtn.disabled = false;
+      message = 'could not reach the printer';
     }
+
+    await gone;
+
+    if (ok) {
+      clear();
+      setStatus('printed');
+    } else {
+      /* The words come back with the paper: with no queue behind the
+         printer, a failed send means they exist only here. */
+      setStatus(message, true);
+    }
+
+    arrive();
   }
 
-  /* animationend rather than setTimeout, so the durations live in one place.
-     No rAF or will-change: rAF does not fire in a background tab. */
-  function onceEnded(name, fn) {
-    let fired = false;
-
-    const finish = () => {
-      if (fired) return;
-
-      fired = true;
-      roll.removeEventListener('animationend', ended);
-      fn();
-    };
-
-    const ended = (e) => {
-      // animationend bubbles, and the hint dots animate inside this subtree.
-      if (e.animationName === name) finish();
-    };
-
-    roll.addEventListener('animationend', ended);
-
-    /* A backstop: a missed event parks the receipt off screen. The duration
-       is read from the stylesheet, so the timings stay in one place. */
-    const seconds = parseFloat(getComputedStyle(roll).animationDuration) || 0;
-    setTimeout(finish, seconds * 1000 + 250);
+  /* A sheet drops in from above the window and springs to rest. Used for the
+     fresh sheet after a print, and for the same sheet coming back after a
+     refusal. */
+  function arrive() {
+    const r = roll.getBoundingClientRect();
+    const restTop = r.top - y;
+    y = -(restTop + r.height + 24);
+    v = 0;
+    phase = 'arrive';
+    place();
+    schedule();
   }
 
   /* A fresh sheet. The typing mode is the sender's setting, not the sheet's,
@@ -411,19 +524,8 @@
     syncKeys();
   }
 
-  function feed() {
-    roll.classList.add('out');
-
-    onceEnded('feed-out', () => {
-      clear();
-      roll.classList.remove('out');
-      roll.classList.add('in');
-
-      onceEnded('feed-in', () => roll.classList.remove('in'));
-
-      ta.focus();
-    });
-  }
+  /* For keyboards and screen readers: the same job, without the gesture. */
+  $('print').addEventListener('click', () => { if (phase === 'rest') submit(); });
 
   /* Asked once on arrival and again when the tab comes back, not polled:
      the print request itself is the authority, and answers offline or out
@@ -445,8 +547,6 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') checkPrinter();
   });
-
-  printBtn.addEventListener('click', print);
 
   clear();
   ta.focus();

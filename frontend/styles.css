@@ -218,36 +218,6 @@
   /* Reverse fills the whole character cell, which the line box already is. */
   .mirror .i { background: var(--ink); color: var(--paper); }
 
-  .bar {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    display: flex;
-    justify-content: center;
-    padding: 1.6rem 1rem;
-    /* Spans the page so the button can centre, but must not catch clicks
-       meant for the paper above it. */
-    pointer-events: none;
-  }
-
-  /* Barely rounded: a key on a machine, not a pill in an app. */
-  .print {
-    pointer-events: auto;
-    font: inherit;
-    font-size: clamp(17px, 2.3vw, 24px);
-    letter-spacing: 0.08em;
-    padding: 0.8em 3.6em;
-    border: 1px solid var(--ink);
-    border-radius: 3px;
-    background: var(--ink);
-    color: var(--paper);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .print:hover { opacity: 0.85; }
-  .print:disabled { opacity: 0.4; cursor: default; }
-  .print:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
-
   /* The front panel: ghost grey, and gone at rest. It appears while the
      paper is being written on or pointed at, and stays while a key is lit,
      so a typing mode is never on invisibly. visibility as well as opacity,
@@ -292,7 +262,7 @@
   .keys button[aria-pressed="true"]::before { content: "\25CF"; }  /* filled */
   .keys button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
 
-  /* The labels show what they do: underlines drawn on the letter, reverse
+  /* The labels show what they do: the underline drawn on the letter, reverse
      as a letter in a filled cell. The cell takes the key's own colour. */
   .keys .under span { text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 3px; }
   .keys .invert span { background: currentColor; padding: 0 0.3em; line-height: 1.15; }
@@ -308,15 +278,29 @@
 
   .status.bad { color: #a33; }
 
-  /* Smooth, not stepped: a real stepper advances hundreds of microsteps per
-     row, so the discreteness only ever read as stutter. */
-  @keyframes feed-out { to { transform: translate3d(0, -118vh, 0); } }
-  @keyframes feed-in { from { transform: translate3d(0, -42vh, 0); } }
+  /* The receipt is picked up by its frame and slid off the top to print.
+     The motion itself is in app.js, driven by the hand and a spring, so a
+     release continues from wherever it was let go; nothing here animates. */
+  .roll { cursor: grab; }
+  .roll.dragging { cursor: grabbing; }
+  .roll .body { cursor: text; }
 
-  /* Accelerating away, then settling in. Paper leaving a slot picks up speed;
-     paper arriving comes to rest. */
-  .roll.out { animation: feed-out 520ms cubic-bezier(0.4, 0, 1, 1) forwards; }
-  .roll.in { animation: feed-in 340ms cubic-bezier(0, 0, 0.2, 1); }
+  /* Where a finger pulls the paper rather than panning the page. Not the
+     writing area, which stays the browser's. */
+  .roll .fixed, .roll .divider { touch-action: none; }
+
+  /* Pulled down, the receipt gives a little; that must not grow the page. */
+  html { overflow-x: hidden; }
+
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
