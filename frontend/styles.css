@@ -311,6 +311,97 @@
   /* Pulled down, the receipt gives a little; that must not grow the page. */
   html { overflow-x: hidden; }
 
+  /* The question in the corner. Ghost grey until wanted, like the keys. */
+  .help {
+    position: fixed;
+    top: max(1.4rem, env(safe-area-inset-top));
+    right: max(1.4rem, env(safe-area-inset-right));
+    z-index: 10;
+    width: 2.2em;
+    height: 2.2em;
+    padding: 0;
+    border: 1px solid var(--ink);
+    border-radius: 50%;
+    background: transparent;
+    /* The ink the receipts are written in, nothing lighter. */
+    color: var(--ink);
+    font: inherit;
+    font-size: clamp(15px, 1.6vw, 18px);
+    line-height: 1;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .help:hover { background: var(--ink); color: var(--paper); }
+  /* While the answer is showing, the question gives its corner to the way
+     back: same circle, same place, a different glyph. */
+  body:has(.about[open]) #help { visibility: hidden; }
+  .help:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  /* The answer is another receipt, lying on the same table. The dialog is
+     the whole window and scrolls, so a receipt longer than the screen is
+     read the way a long receipt is: by moving the paper, not a pane in it. */
+  .about {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    padding: 1.25rem 1rem;
+    background: transparent;
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  /* Only while open: a display value on the dialog itself would override
+     the browser's rule that a closed dialog is not shown. Flex with auto
+     margins on the sheet centres it when it fits and scrolls from the top
+     on the rare screen where it does not. */
+  .about[open] { display: flex; }
+
+  /* The shadow sits on a wrapper, as on the receipt: a filter on the masked
+     paper itself would be cut away with the teeth. */
+  .about .sheet {
+    width: max-content;
+    margin: auto;
+    filter:
+      drop-shadow(0 0 2px  rgb(var(--shade) / 0.08))
+      drop-shadow(0 0 12px rgb(var(--shade) / 0.10))
+      drop-shadow(0 0 40px rgb(var(--shade) / 0.12));
+  }
+
+  /* The backdrop is the table itself, the same fill and pool of light as the
+     page, so the help reads as a receipt swapped in rather than a window on
+     top. Literal colours: ::backdrop does not see custom properties in every
+     browser yet. */
+  .about::backdrop {
+    background: #f5f4f2 radial-gradient(70% 55% at 50% 42%, #ffffff 0%, #f5f4f2 55%, #edebe7 100%);
+  }
+
+  /* The receipt's own type size, except on a window too short for it -- a
+     laptop with the browser's chrome eating the height -- where the sheet
+     shrinks just enough to fit rather than scroll. The sheet is 27 lines
+     tall; the subtraction is the dialog's padding. */
+  .about .paper {
+    position: relative;
+    font-size: min(var(--font-size), calc((100svh - 2.5rem) / 27));
+  }
+
+  /* Set exactly as the writing on a receipt: same face, same size, same
+     paper width, so the help is what a printed one would look like. */
+  .about .prose {
+    line-height: 1.2;
+    color: var(--ink);
+  }
+
+  .about .plea { text-align: center; }
+
+  .about .prose p { margin: 0 0 0.7em; }
+  .about .prose p:last-child { margin-bottom: 0; }
+
   .sr-only {
     position: absolute;
     width: 1px; height: 1px;

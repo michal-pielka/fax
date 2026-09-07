@@ -56,6 +56,36 @@
      the keys and the bottom of the page rather than tucked under them. -->
 <div class="status" id="status" role="status" aria-live="polite"></div>
 
+<!-- The one piece of chrome: a question in the corner. -->
+<button class="help" id="help" aria-haspopup="dialog" aria-controls="about" aria-label="What is this?">?</button>
+
+<!-- The answer, printed on another receipt. A native dialog: the browser
+     does the backdrop, the focus trap and Escape. -->
+<dialog class="about" id="about" aria-labelledby="aboutTitle">
+  <div class="sheet">
+  <div class="paper">
+    <div class="zone fixed">
+      <div class="big" id="aboutTitle">WHAT IS THIS</div>
+    </div>
+    <div class="divider about-divider"></div>
+    <div class="zone prose">
+      <p>A receipt printer in my home. Write me something, anything, and it prints there, on real paper.</p>
+      <p>Type, style it with the keys, slide it off the top of the screen.</p>
+      <p>Nine short lines and nothing fancier than a letter. One receipt at a time.</p>
+	  <p>I read every one</p>
+	  <p>That is the entire feature set.</p>
+    </div>
+    <div class="divider about-divider"></div>
+    <div class="zone fixed">
+      <div>*** fax.pielka.sh ***</div>
+    </div>
+  </div>
+  </div>
+  <!-- The way back, in the corner the question came from. Inside the dialog
+       because everything outside a modal one is inert. -->
+  <button class="help back" id="aboutBack" aria-label="Back">&lt;</button>
+</dialog>
+
 <script src="app.js"></script>
 </body>
 </html>

@@ -548,6 +548,20 @@
     if (document.visibilityState === 'visible') checkPrinter();
   });
 
+  /* ---- the question in the corner ------------------------------------- */
+
+  const about = $('about');
+
+  $('help').addEventListener('click', () => about.showModal());
+  $('aboutBack').addEventListener('click', () => about.close());
+
+  /* A click on the backdrop closes it; the backdrop is the dialog itself
+     outside its content, so the target is the dialog and nothing inside. */
+  about.addEventListener('click', (e) => { if (e.target === about) about.close(); });
+
+  /* Its dividers are drawn from the same column count as the receipt's. */
+  document.querySelectorAll('.about-divider').forEach(d => { d.textContent = '-'.repeat(COLS); });
+
   clear();
   ta.focus();
 })();
