@@ -215,36 +215,6 @@
   /* Reverse fills the whole character cell, which the line box already is. */
   .mirror .i { background: var(--ink); color: var(--paper); }
 
-  .pop {
-    position: absolute; z-index: 50; display: none;
-    background: var(--paper);
-    border-radius: 3px;
-    box-shadow: 0 1px 2px #00000014, 0 10px 26px -6px #00000026;
-    font-family: 'VT323', ui-monospace, monospace;
-    gap: 1px; padding: 3px;
-  }
-  .pop.on { display: flex; }
-
-  #tools button {
-    font: inherit; font-size: 15px; color: var(--ink-dim);
-    background: transparent; border: 0; border-radius: 2px;
-    padding: 0.3rem 0.4rem; min-width: 30px; cursor: pointer;
-    transition: background 110ms, color 110ms;
-  }
-  /* The labels show what they do. Thick underline is drawn on the letter
-     rather than spelt out, and reverse is a letter in a filled box. */
-  #tools button.under  { text-decoration: underline; text-underline-offset: 2px; }
-  #tools button.thick  { text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 2px; }
-  #tools button.invert { background: var(--ink-dim); color: var(--paper); }
-  #tools button:hover { background: #2a27240f; color: var(--ink); }
-  #tools button.invert:hover { background: var(--ink); color: var(--paper); }
-  #tools button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-  #tools .sep { width: 1px; background: var(--ink-ghost); margin: 4px 3px; }
-
-  /* The caret is the focus indicator on the paper; an outline round the
-     editable region is the one bit of chrome that cannot be dismissed. */
-  #tools button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-
   .bar {
     position: fixed;
     left: 0; right: 0; bottom: 0;
@@ -268,11 +238,63 @@
     background: var(--ink);
     color: var(--paper);
     cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .print:hover { opacity: 0.85; }
   .print:disabled { opacity: 0.4; cursor: default; }
   .print:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  /* The front panel: ghost grey, and gone at rest. It appears while the
+     paper is being written on or pointed at, and stays while a key is lit,
+     so a typing mode is never on invisibly. visibility as well as opacity,
+     or a tap on the empty space would press an invisible key. */
+  .keys {
+    display: flex;
+    gap: clamp(20px, 3.4vw, 40px);
+    font-size: clamp(15px, 2.05vw, 22px);
+    letter-spacing: 0.1em;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 220ms, visibility 0s 220ms;
+  }
+
+  .stack:focus-within .keys,
+  .stack:hover .keys,
+  .keys:has([aria-pressed="true"]) {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 220ms, visibility 0s;
+  }
+
+  /* Monochrome on purpose: a coloured key would be the one thing here that
+     could not have come out of the machine. */
+  .keys button {
+    font: inherit;
+    letter-spacing: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: rgb(var(--shade) / 0.32);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .keys button::before { content: "\25CB"; }            /* hollow circle */
+  .keys button:hover { color: var(--ink-dim); }
+  .keys button[aria-pressed="true"] { color: var(--ink); }
+  .keys button[aria-pressed="true"]::before { content: "\25CF"; }  /* filled */
+  .keys button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+
+  /* The labels show what they do: underlines drawn on the letter, reverse
+     as a letter in a filled cell. The cell takes the key's own colour. */
+  .keys .under span { text-decoration: underline; text-underline-offset: 3px; }
+  .keys .thick span { text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 3px; }
+  .keys .invert span { background: currentColor; padding: 0 0.3em; line-height: 1.15; }
+  .keys .invert span::after { content: "A"; color: var(--paper); }
 
   /* Reserves its line whether or not there is a message, so the paper above
      does not jump when one appears. */

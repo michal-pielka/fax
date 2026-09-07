@@ -36,6 +36,11 @@
   </div>
 </div>
 
+  <!-- The front panel, under the paper it changes. With text selected a key
+       styles it; with a bare caret it sets what typing produces, and stays
+       lit until pressed again. Shown while the paper is being written on. -->
+  <div class="keys" id="keys" role="toolbar" aria-label="Formatting"></div>
+
   <div class="status" id="status" role="status" aria-live="polite"></div>
 
 </div>
@@ -43,8 +48,6 @@
 <div class="bar">
   <button id="print" class="print">PRINT</button>
 </div>
-
-<div class="pop" id="tools" role="toolbar" aria-label="Formatting"></div>
 
 <script src="app.js"></script>
 </body>

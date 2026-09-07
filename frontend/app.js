@@ -3,7 +3,7 @@
   const cssInt = (name) => parseInt(getComputedStyle(document.documentElement).getPropertyValue(name), 10);
   const COLS = cssInt('--cols'), ROWS = cssInt('--rows');
   const $ = (id) => document.getElementById(id);
-  const ta = $('text'), mirror = $('mirror'), roll = $('roll'), tools = $('tools'), status = $('status');
+  const ta = $('text'), mirror = $('mirror'), roll = $('roll'), keys = $('keys'), status = $('status');
   const printBtn = $('print');
 
   $('divTop').textContent = '-'.repeat(COLS);
@@ -18,38 +18,6 @@
      switching one on switches the other off. */
   const UNDERLINES = UNDER | THICK;
 
-  /* One byte per character of ta.value, kept the same length at all times.
-     Raw: what was applied. What shows and what prints is effective(), below. */
-  let styles = new Uint8Array(0);
-
-  const isSpace = (c) => c === ' ' || c === '\n';
-
-  /* Styles as they appear on paper. A space has no glyph, so a style on it is
-     a stray underline or a black cell: it keeps one only between two styled
-     characters on the same line, where it joins them. Newlines never do. */
-  function effective() {
-    const text = ta.value, out = new Uint8Array(styles);
-    let i = 0;
-
-    while (i < text.length) {
-      if (!isSpace(text[i])) { i++; continue; }
-
-      let j = i;
-      while (j < text.length && text[j] === ' ') j++;
-
-      /* A run of spaces from i to j. Interior if flanked, on this line, by
-         styled non-space characters on both sides. */
-      const before = i > 0 && text[i - 1] !== '\n' && styles[i - 1];
-      const after = j < text.length && text[j] !== '\n' && styles[j];
-      if (!(before && after)) out.fill(0, i, j);
-
-      if (j < text.length && text[j] === '\n') { out[j] = 0; j++; }
-      i = Math.max(j, i + 1);
-    }
-
-    return out;
-  }
-
   /* Only what the printer does. Anything else would look right here and
      silently vanish on paper. */
   const TOOLS = [
@@ -61,6 +29,17 @@
 
   /* Set a tool's bit on a style byte, clearing what it excludes. */
   const withTool = (style, t) => (style & ~(t.clears || 0)) | t.bit;
+
+  /* One byte per character of ta.value, kept the same length at all times.
+     Raw: what was applied. What shows and what prints is effective(). */
+  let styles = new Uint8Array(0);
+
+  /* The typing mode: the style every typed character gets. Set only by the
+     keys or their shortcuts, never by what happens to be near the caret, and
+     kept until switched off the same way. */
+  let mode = 0;
+
+  const isSpace = (c) => c === ' ' || c === '\n';
 
   /* ---- the paper ------------------------------------------------------ */
 
@@ -89,21 +68,41 @@
 
   /* ---- styles --------------------------------------------------------- */
 
-  /* Style toggled with nothing selected. It applies to what is typed next,
-     until the caret moves, the way a word processor's B button behaves. */
-  let pending = null;
+  /* Styles as they appear on paper. A space has no glyph, so a style on it is
+     a stray underline or a black cell: it keeps one only between two styled
+     characters on the same line, where it joins them. Newlines never do. */
+  function effective(text = ta.value, raw = styles) {
+    const out = new Uint8Array(raw);
+    let i = 0;
+
+    while (i < text.length) {
+      if (!isSpace(text[i])) { i++; continue; }
+
+      let j = i;
+      while (j < text.length && text[j] === ' ') j++;
+
+      const before = i > 0 && text[i - 1] !== '\n' && raw[i - 1];
+      const after = j < text.length && text[j] !== '\n' && raw[j];
+      if (!(before && after)) out.fill(0, i, j);
+
+      if (j < text.length && text[j] === '\n') { out[j] = 0; j++; }
+      i = Math.max(j, i + 1);
+    }
+
+    return out;
+  }
 
   /* The value and selection after the last edit we accounted for. */
-  let last = { text: '', start: 0, end: 0 };
+  let last = { text: '' };
 
   function remember() {
-    last = { text: ta.value, start: ta.selectionStart, end: ta.selectionEnd };
+    last = { text: ta.value };
   }
 
   /* Reconcile styles after the textarea changed underneath us. Every edit a
      textarea can make -- typing, deleting, paste, drop, IME, undo -- replaces
      one contiguous range, so the old and new text differ in one place. Find
-     it, and give inserted characters the style they would have inherited. */
+     it, and decide what the inserted characters look like. */
   function reconcile() {
     const oldT = last.text, newT = ta.value;
     if (oldT === newT) return;
@@ -124,31 +123,32 @@
 
     const removed = oldT.length - p - s, inserted = newT.length - p - s;
 
-    /* Typing continues the style of the character before the caret, but
-       not across a space: the style ends with the word, which is how it
-       stops without a toggle. An explicit toggle overrides all of that. */
-    let inherit = 0;
-    if (pending !== null) inherit = pending;
-    else if (removed > 0) inherit = styles[p];
-    else if (p > 0 && !isSpace(oldT[p - 1])) inherit = styles[p - 1];
+    /* The mode wins. Without one, a character inherits a style only when it
+       lands strictly inside a styled run, so fixing a typo in a bold word
+       keeps it bold, but typing after the word -- even right after a
+       selection that was just styled -- starts plain. */
+    let inherit = mode;
+    if (!mode && inserted > 0) {
+      const eff = effective(oldT, styles);
+      const q = p + removed; // first old character after the replaced range
+      if (p > 0 && q < oldT.length && eff[p - 1] && eff[p - 1] === eff[q]) inherit = eff[p - 1];
+    }
 
     const next = new Uint8Array(newT.length);
     next.set(styles.subarray(0, p), 0);
     next.fill(inherit, p, p + inserted);
     next.set(styles.subarray(p + removed), p + inserted);
-
     styles = next;
   }
 
+  /* A key with text selected styles the selection and nothing else. With no
+     selection it switches the typing mode. */
   function applyTool(t) {
     const a = ta.selectionStart, b = ta.selectionEnd;
 
     if (a === b) {
-      const base = styleAtCaret();
-      pending = base & t.bit ? base & ~t.bit : withTool(base, t);
-      /* Anchor the caret: pending lasts as long as edits keep happening here. */
-      last.start = last.end = a;
-      syncTools();
+      mode = mode & t.bit ? mode & ~t.bit : withTool(mode, t);
+      syncKeys();
       return;
     }
 
@@ -164,7 +164,7 @@
     for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : withTool(styles[i], t);
 
     render();
-    syncTools();
+    syncKeys();
   }
 
   /* ---- rendering ------------------------------------------------------ */
@@ -209,94 +209,56 @@
     mirror.replaceChildren(frag);
   }
 
-  /* ---- toolbar -------------------------------------------------------- */
+  /* ---- the keys ------------------------------------------------------- */
 
   TOOLS.forEach(t => {
     const b = document.createElement('button');
-    b.textContent = t.label; b.title = t.title; b.dataset.key = t.key; b.className = t.key;
+    b.type = 'button';
+    b.title = t.title; b.dataset.key = t.key; b.className = t.key;
+    b.setAttribute('aria-pressed', 'false');
+    /* The label sits in its own element so the reverse key can draw a
+       filled cell around its letter. */
+    const label = document.createElement('span');
+    /* The reverse key's letter is drawn by CSS inside a filled cell. */
+    if (t.key !== 'invert') label.textContent = t.label;
+    b.append(label);
     /* mousedown, so the textarea keeps focus and its selection. */
     b.addEventListener('mousedown', e => e.preventDefault());
-    b.addEventListener('click', () => applyTool(t));
-    tools.append(b);
+    b.addEventListener('click', () => { applyTool(t); ta.focus(); });
+    keys.append(b);
   });
 
-  function styleAtCaret() {
-    if (pending !== null) return pending;
-    const a = ta.selectionStart;
-    return a > 0 && !isSpace(ta.value[a - 1]) ? styles[a - 1] : 0;
-  }
-
-  /* Whether a selection has anything a style could show on. */
-  function selectionHasInk() {
-    for (let i = ta.selectionStart; i < ta.selectionEnd; i++) if (!isSpace(ta.value[i])) return true;
-    return false;
-  }
-
-  function syncTools() {
+  /* Pressed means: with a selection, every selected character has it; with a
+     bare caret, it is part of the typing mode. */
+  function syncKeys() {
     const a = ta.selectionStart, b = ta.selectionEnd;
-    tools.querySelectorAll('button').forEach(btn => {
+    keys.querySelectorAll('button').forEach(btn => {
       const t = TOOLS.find(x => x.key === btn.dataset.key);
       let on;
-      if (a === b) on = !!(styleAtCaret() & t.bit);
+      if (a === b) on = !!(mode & t.bit);
       else {
-        on = true;
-        for (let i = a; i < b; i++) if (!isSpace(ta.value[i]) && !(styles[i] & t.bit)) { on = false; break; }
+        on = false;
+        for (let i = a; i < b; i++) {
+          if (isSpace(ta.value[i])) continue;
+          on = true;
+          if (!(styles[i] & t.bit)) { on = false; break; }
+        }
       }
       btn.setAttribute('aria-pressed', String(on));
     });
   }
 
-  /* The selection lives in the textarea, which has no geometry API; the
-     mirror has identical layout, so measure the same range there. */
-  function selectionRect() {
-    const a = ta.selectionStart, b = ta.selectionEnd;
-    const range = document.createRange();
-    let at = 0, startSet = false;
-
-    const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const len = node.length;
-      if (!startSet && a <= at + len) { range.setStart(node, a - at); startSet = true; }
-      if (startSet && b <= at + len) { range.setEnd(node, b - at); return range.getBoundingClientRect(); }
-      at += len;
-    }
-    return null;
-  }
-
-  function placeTools() {
-    if (!selectionHasInk()) { tools.classList.remove('on'); return; }
-    const r = selectionRect();
-    if (!r) return;
-    tools.classList.add('on');
-    const w = tools.offsetWidth;
-    tools.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2 + scrollX)) + 'px';
-    tools.style.top = (r.top + scrollY - tools.offsetHeight - 8) + 'px';
-    syncTools();
-  }
-
-  document.addEventListener('selectionchange', () => {
-    if (document.activeElement !== ta) return;
-    /* A moved caret ends a pending toggle; the edit it was for never came. */
-    if (ta.selectionStart !== last.start || ta.selectionEnd !== last.end) pending = null;
-    last.start = ta.selectionStart; last.end = ta.selectionEnd;
-    placeTools();
-  });
-
-  document.addEventListener('mousedown', (e) => {
-    if (!tools.contains(e.target) && e.target !== ta) tools.classList.remove('on');
-  });
+  /* selectionchange arrives lazily in Chromium; keyup and pointerup cover
+     the gap. All three only refresh what the keys show. */
+  document.addEventListener('selectionchange', () => { if (document.activeElement === ta) syncKeys(); });
+  ta.addEventListener('keyup', syncKeys);
+  ta.addEventListener('pointerup', syncKeys);
 
   /* ---- editing -------------------------------------------------------- */
 
   /* Edits whose outcome is known before they land are refused before they
      land: no rollback, nothing for the undo stack to see. */
   ta.addEventListener('beforeinput', (e) => {
-    /* A pending style is for typing at the spot it was set. If the caret is
-       anywhere else now -- moved by mouse, touch or arrow keys -- it is over.
-       Checked here rather than on selectionchange, which Chromium delivers
-       lazily enough to arrive after the next keystroke. */
-    if (pending !== null && (ta.selectionStart !== last.start || ta.selectionEnd !== last.end)) pending = null;
-
     let data = null;
     if (e.inputType === 'insertText') data = e.data ?? '';
     else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') data = '\n';
@@ -329,30 +291,22 @@
        Rare, so a plain restore is acceptable here. */
     if (!fits(ta.value)) {
       ta.value = last.text;
-      ta.setSelectionRange(last.start, last.end);
     }
 
     reconcile();
-    /* pending survives typing on purpose: it ends when the caret is moved
-       by anything other than the text it is styling (see selectionchange). */
     remember();
     render();
-    syncTools();
+    syncKeys();
     setStatus('');
   });
 
   ta.addEventListener('keydown', (e) => {
-    /* Moving the caret, even back to the same place, ends a pending style. */
-    if (/^(Arrow|Home$|End$|Page)/.test(e.key)) pending = null;
-
     const meta = e.metaKey || e.ctrlKey;
-    if (meta && e.key === 'Enter') { e.preventDefault(); print(); return; }
     if (!meta) return;
+    if (e.key === 'Enter') { e.preventDefault(); print(); return; }
     const tool = { b: 'bold', u: e.shiftKey ? 'thick' : 'under', i: 'invert' }[e.key.toLowerCase()];
     if (tool) { e.preventDefault(); applyTool(TOOLS.find(t => t.key === tool)); }
   });
-
-  ta.addEventListener('pointerdown', () => { pending = null; });
 
   /* The textarea scrolls to chase the caret even with the content fitting,
      by a pixel or two on some platforms; the mirror would not follow. */
@@ -361,7 +315,7 @@
   /* ---- printing ------------------------------------------------------- */
 
   /* The server wants flat text plus character ranges, so each run of styled
-     characters becomes one span. Newlines are never inside a run. */
+     characters becomes one span. */
   function document_() {
     const text = ta.value, shown = effective();
     const spans = [];
@@ -400,7 +354,6 @@
 
     printing = true;
     printBtn.disabled = true;
-    tools.classList.remove('on');
     setStatus('printing...');
 
     try {
@@ -454,12 +407,14 @@
     setTimeout(finish, seconds * 1000 + 250);
   }
 
+  /* A fresh sheet. The typing mode is the sender's setting, not the sheet's,
+     so it survives. */
   function clear() {
     ta.value = '';
     styles = new Uint8Array(0);
-    pending = null;
     remember();
     render();
+    syncKeys();
   }
 
   function feed() {
