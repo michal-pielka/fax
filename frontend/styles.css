@@ -75,6 +75,11 @@
     gap: 0.9rem;
   }
 
+  /* The layer that moves. Nothing is painted on it; the shadow lives on the
+     .roll inside, where a transform never touches it. Promoted to its own
+     layer so a drag is a composite, not a repaint of the paper. */
+  .slide { will-change: transform; }
+
   /* The shadow is a drop-shadow on the wrapper, not a box-shadow on the paper,
      so it traces the torn teeth instead of a rectangle. */
   .roll {
@@ -281,13 +286,13 @@
   /* The receipt is picked up by its frame and slid off the top to print.
      The motion itself is in app.js, driven by the hand and a spring, so a
      release continues from wherever it was let go; nothing here animates. */
-  .roll { cursor: grab; }
-  .roll.dragging { cursor: grabbing; }
-  .roll .body { cursor: text; }
+  .slide { cursor: grab; }
+  .slide.dragging { cursor: grabbing; }
+  .slide .body { cursor: text; }
 
   /* Where a finger pulls the paper rather than panning the page. Not the
      writing area, which stays the browser's. */
-  .roll .fixed, .roll .divider { touch-action: none; }
+  .slide .fixed, .slide .divider { touch-action: none; }
 
   /* Pulled down, the receipt gives a little; that must not grow the page. */
   html { overflow-x: hidden; }

@@ -10,7 +10,11 @@
 
 <div class="stack">
 
-  <div class="roll" id="roll">
+  <!-- Two layers on purpose: the outer one moves, the inner one carries the
+       shadow. WebKit leaves a filter's shadow behind when the filtered
+       element itself is transformed frame by frame. -->
+  <div class="slide" id="roll">
+  <div class="roll">
     <div class="paper">
     <!-- Must match the frame in backend/internal/render/render.go. The point
          of the preview is that it looks like what comes out. -->
@@ -34,7 +38,8 @@
       <div>*** fax.pielka.sh ***</div>
     </div>
   </div>
-</div>
+  </div>
+  </div>
 
   <!-- The front panel, under the paper it changes. With text selected a key
        styles it; with a bare caret it sets what typing produces, and stays
