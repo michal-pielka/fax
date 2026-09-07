@@ -12,6 +12,7 @@
 #   ./deploy/logs.sh errors        warnings and errors only
 #   ./deploy/logs.sh slow [ms]     requests over a threshold, default 1000
 #   ./deploy/logs.sh callers       who is using it, busiest first
+#   ./deploy/logs.sh caller <ip>   everything one address sent, oldest first
 #   ./deploy/logs.sh printer       what the device has said about itself
 #   ./deploy/logs.sh tail          live, readable
 #   ./deploy/logs.sh raw           the JSON stream, for your own jq
@@ -20,7 +21,8 @@
 #
 #   ./deploy/logs.sh --since 10m errors
 #
-# To work on a saved dump instead of the live stack:
+# To work on a saved dump instead of the live stack -- either the output of
+# `docker compose logs` or of `logs.sh raw`, one JSON object per line:
 #
 #   FAX_LOGS=/tmp/incident.log ./deploy/logs.sh trace 9ca16fa7
 
@@ -32,8 +34,9 @@ if [[ "${1:-}" == "--since" || "${1:-}" == "-s" ]]; then
 	shift 2
 fi
 
-# Lines the Go services and Caddy emit are JSON; mosquitto's are not, and
-# `fromjson? // empty` is what quietly drops those rather than failing.
+# Lines the Go services and Caddy emit are JSON objects; mosquitto's are not,
+# and a stray line can even parse as a bare JSON string. `fromjson? // empty`
+# and the type check quietly drop both rather than failing a query.
 stream() {
 	if [[ -n "${FAX_LOGS:-}" ]]; then
 		cat "$FAX_LOGS"
@@ -43,7 +46,7 @@ stream() {
 		docker compose logs --no-color "$@"
 	fi |
 		sed -E 's/^([^ |]+)[[:space:]]*\|[[:space:]]*\{/{"svc":"\1",/' |
-		jq -R 'fromjson? // empty'
+		jq -Rc 'fromjson? // empty | select(type == "object")'
 }
 
 # Service names are padded to align; trimming makes the columns line up again.
@@ -88,6 +91,17 @@ callers)
 		| sort_by(-.hits)[]
 		| "\(.hits | tostring | (" " * (6 - length)) + .)  \(.prints | tostring
 			| (" " * (6 - length)) + .) prints  \(.ip)"'
+	;;
+caller)
+	[[ -n "${2:-}" ]] || { echo "usage: logs.sh caller <ip>" >&2; exit 2; }
+	# One address's print attempts, in the order they arrived. The text lives
+	# on the gateway's "printed" line and the address on its "request" line;
+	# the trace id joins them. A refused attempt has a status but no text.
+	stream | jq -sr --arg ip "$2" '
+		[ .[] | select(.msg == "request" and .path == "/api/print" and .ip == $ip) ] as $reqs
+		| ([ .[] | select(.msg == "printed") | {key: .trace, value: .text} ] | from_entries) as $texts
+		| $reqs | sort_by(.time)[]
+		| "\(.time[0:19] | sub("T"; " "))  \(.trace[0:8])  \(.status)  \($texts[.trace] // "-")"'
 	;;
 printer)
 	# The device's own account of itself, plus the jobs it acknowledged.
