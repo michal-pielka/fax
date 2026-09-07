@@ -108,6 +108,8 @@ raw)
 	stream
 	;;
 *)
-	sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'
+	# The header comment, up to the first line that is not one: a fixed line
+	# range went stale the last time the header changed and printed code.
+	awk 'NR > 2 && !/^#/ { exit } NR > 2 { sub(/^# ?/, ""); print }' "$0"
 	;;
 esac
