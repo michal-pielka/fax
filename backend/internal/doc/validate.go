@@ -40,10 +40,6 @@ func (d Document) Validate(limits Limits) error {
 			return invalidf("span %d: range [%d,%d) outside text of %d characters",
 				i, s.Start, s.End, n)
 		}
-
-		if s.Style.Underline < 0 || s.Style.Underline > 2 {
-			return invalidf("span %d: underline %d, want 0, 1 or 2", i, s.Style.Underline)
-		}
 	}
 
 	return nil

@@ -12,23 +12,15 @@
   /* The textarea holds the text and the browser owns editing: caret, selection,
      undo, IME, mobile keyboards. This module owns only two things the textarea
      cannot: a style per character, and the size of the paper. */
-  const BOLD = 1, UNDER = 2, THICK = 4, INVERT = 8;
-
-  /* Thin and thick underline are one printer setting with two values, so
-     switching one on switches the other off. */
-  const UNDERLINES = UNDER | THICK;
+  const BOLD = 1, UNDER = 2, INVERT = 4;
 
   /* Only what the printer does. Anything else would look right here and
      silently vanish on paper. */
   const TOOLS = [
     { key: 'bold',   label: 'B', title: 'Bold (Ctrl+B)',                    bit: BOLD },
-    { key: 'under',  label: 'U', title: 'Underline (Ctrl+U)',               bit: UNDER, clears: UNDERLINES },
-    { key: 'thick',  label: 'U', title: 'Thick underline (Ctrl+Shift+U)',   bit: THICK, clears: UNDERLINES },
+    { key: 'under',  label: 'U', title: 'Underline (Ctrl+U)',               bit: UNDER },
     { key: 'invert', label: 'A', title: 'Reverse, white on black (Ctrl+I)', bit: INVERT },
   ];
-
-  /* Set a tool's bit on a style byte, clearing what it excludes. */
-  const withTool = (style, t) => (style & ~(t.clears || 0)) | t.bit;
 
   /* One byte per character of ta.value, kept the same length at all times.
      Raw: what was applied. What shows and what prints is effective(). */
@@ -147,7 +139,7 @@
     const a = ta.selectionStart, b = ta.selectionEnd;
 
     if (a === b) {
-      mode = mode & t.bit ? mode & ~t.bit : withTool(mode, t);
+      mode ^= t.bit;
       syncKeys();
       return;
     }
@@ -161,7 +153,7 @@
       if (!(styles[i] & t.bit)) { allOn = false; break; }
     }
     if (!any) return;
-    for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : withTool(styles[i], t);
+    for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : styles[i] | t.bit;
 
     render();
     syncKeys();
@@ -173,7 +165,6 @@
     const c = [];
     if (style & BOLD) c.push('b');
     if (style & UNDER) c.push('u');
-    if (style & THICK) c.push('uu');
     if (style & INVERT) c.push('i');
     return c.join(' ');
   }
@@ -304,7 +295,7 @@
     const meta = e.metaKey || e.ctrlKey;
     if (!meta) return;
     if (e.key === 'Enter') { e.preventDefault(); print(); return; }
-    const tool = { b: 'bold', u: e.shiftKey ? 'thick' : 'under', i: 'invert' }[e.key.toLowerCase()];
+    const tool = { b: 'bold', u: 'under', i: 'invert' }[e.key.toLowerCase()];
     if (tool) { e.preventDefault(); applyTool(TOOLS.find(t => t.key === tool)); }
   });
 
@@ -327,8 +318,7 @@
       while (j < text.length && shown[j] === shown[i]) j++;
       const style = {};
       if (shown[i] & BOLD) style.bold = true;
-      if (shown[i] & UNDER) style.underline = 1;
-      if (shown[i] & THICK) style.underline = 2;
+      if (shown[i] & UNDER) style.underline = true;
       if (shown[i] & INVERT) style.invert = true;
       spans.push({ start: i, end: j, style });
       i = j;

@@ -207,11 +207,14 @@
   /* Faux bold by shadow, never font-weight: a heavier face could change the
      advance width and pull the mirror out from under the caret. */
   .mirror .b { text-shadow: 0.5px 0 0 currentColor; }
-  /* The printer's underline is one or two dots of a 24-dot cell, so the
-     thickness is a fraction of the em rather than a pixel count. */
-  .mirror .u, .mirror .uu { text-decoration: underline; text-underline-offset: 2px; text-decoration-skip-ink: none; }
-  .mirror .u  { text-decoration-thickness: max(1px, calc(1em / 24)); }
-  .mirror .uu { text-decoration-thickness: max(2px, calc(1em / 12)); }
+  /* The printer's underline is two dots of a 24-dot cell, so the thickness
+     is a fraction of the em rather than a pixel count. */
+  .mirror .u {
+    text-decoration: underline;
+    text-decoration-thickness: max(2px, calc(1em / 12));
+    text-underline-offset: 2px;
+    text-decoration-skip-ink: none;
+  }
   /* Reverse fills the whole character cell, which the line box already is. */
   .mirror .i { background: var(--ink); color: var(--paper); }
 
@@ -291,8 +294,7 @@
 
   /* The labels show what they do: underlines drawn on the letter, reverse
      as a letter in a filled cell. The cell takes the key's own colour. */
-  .keys .under span { text-decoration: underline; text-underline-offset: 3px; }
-  .keys .thick span { text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 3px; }
+  .keys .under span { text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 3px; }
   .keys .invert span { background: currentColor; padding: 0 0.3em; line-height: 1.15; }
   .keys .invert span::after { content: "A"; color: var(--paper); }
 

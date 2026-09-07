@@ -65,8 +65,7 @@ func TestRenderEndpointRejectsBadInput(t *testing.T) {
 		"empty":          `{"text":"   "}`,
 		"non ascii":      `{"text":"Kraków"}`,
 		"span past end":  `{"text":"hi","spans":[{"start":0,"end":99,"style":{"bold":true}}]}`,
-		"underline 3":    `{"text":"hi","spans":[{"start":0,"end":1,"style":{"underline":3}}]}`,
-		"underline bool": `{"text":"hi","spans":[{"start":0,"end":1,"style":{"underline":true}}]}`,
+		"underline int":  `{"text":"hi","spans":[{"start":0,"end":1,"style":{"underline":2}}]}`,
 		"too long":       `{"text":"` + strings.Repeat("a", maxRunes+1) + `"}`,
 	}
 

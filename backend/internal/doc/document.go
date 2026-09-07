@@ -15,9 +15,9 @@ type Span struct {
 // the frame's columns stay put whatever is switched on.
 type Style struct {
 	Bold bool `json:"bold,omitempty"`
-	// Underline thickness in dots: 0 none, 1 thin, 2 thick. ESC - n takes the
-	// same values, so this is the wire format and the command in one.
-	Underline int `json:"underline,omitempty"`
+	// Underline is the printer's two-dot underline; the one-dot one is too
+	// faint on thermal paper to be worth offering.
+	Underline bool `json:"underline,omitempty"`
 	// Invert prints white on black: the whole character cell goes dark.
 	Invert bool `json:"invert,omitempty"`
 }

@@ -68,28 +68,11 @@ func TestRender(t *testing.T) {
 			want: cat(boldOn, text("hi"), boldOff),
 		},
 		{
-			name: "underline",
+			name: "underline is the two-dot kind",
 			in: doc.Document{Text: "ab", Spans: []doc.Span{
-				{Start: 1, End: 2, Style: doc.Style{Underline: 1}},
+				{Start: 1, End: 2, Style: doc.Style{Underline: true}},
 			}},
-			want: cat(text("a"), underline(1), text("b"), underline(0)),
-		},
-		{
-			name: "thick underline is the same command with a different count",
-			in: doc.Document{Text: "ab", Spans: []doc.Span{
-				{Start: 0, End: 1, Style: doc.Style{Underline: 2}},
-			}},
-			want: cat(underline(2), text("a"), underline(0), text("b")),
-		},
-		{
-			// The join is one command, not off-then-on: the printer would
-			// otherwise print nothing between the two.
-			name: "thin to thick switches in one step",
-			in: doc.Document{Text: "ab", Spans: []doc.Span{
-				{Start: 0, End: 1, Style: doc.Style{Underline: 1}},
-				{Start: 1, End: 2, Style: doc.Style{Underline: 2}},
-			}},
-			want: cat(underline(1), text("a"), underline(2), text("b"), underline(0)),
+			want: cat(text("a"), underlineOn, text("b"), underlineOff),
 		},
 		{
 			name: "invert",
@@ -108,9 +91,9 @@ func TestRender(t *testing.T) {
 		{
 			name: "bold and underline together emit both",
 			in: doc.Document{Text: "x", Spans: []doc.Span{
-				{Start: 0, End: 1, Style: doc.Style{Bold: true, Underline: 1}},
+				{Start: 0, End: 1, Style: doc.Style{Bold: true, Underline: true}},
 			}},
-			want: cat(boldOn, underline(1), text("x"), boldOff, underline(0)),
+			want: cat(boldOn, underlineOn, text("x"), boldOff, underlineOff),
 		},
 		{
 			// Breaks a boundary-walking implementation: it would switch bold
@@ -172,7 +155,7 @@ func TestRenderAlwaysResetsAndFeeds(t *testing.T) {
 // come from the same call, and golden tests are worthless if it drifts.
 func TestRenderIsDeterministic(t *testing.T) {
 	d := doc.Document{Text: "abcdef", Spans: []doc.Span{bold(1, 3), {
-		Start: 2, End: 5, Style: doc.Style{Underline: 2, Invert: true},
+		Start: 2, End: 5, Style: doc.Style{Underline: true, Invert: true},
 	}}}
 
 	first := Render(d)
@@ -190,7 +173,7 @@ func TestTextSurvivesUnaltered(t *testing.T) {
 	const message = "Order #1234\nTotal: $9.99\n** thanks **"
 
 	got := Render(doc.Document{Text: message, Spans: []doc.Span{bold(0, 5), {
-		Start: 12, End: 17, Style: doc.Style{Underline: 2, Invert: true},
+		Start: 12, End: 17, Style: doc.Style{Underline: true, Invert: true},
 	}}})
 
 	if stripped := stripCommands(body(t, got)); !bytes.Equal(stripped, []byte(message)) {
@@ -224,8 +207,8 @@ func stripCommands(b []byte) []byte {
 // A guard on the guard: if stripCommands were wrong, the test above would pass
 // for the wrong reason.
 func TestStripCommands(t *testing.T) {
-	in := cat(reset, boldOn, text("ab"), boldOff, underline(1), text("c"),
-		underline(0), invertOn, text("d"), invertOff, feed(tailFeed))
+	in := cat(reset, boldOn, text("ab"), boldOff, underlineOn, text("c"),
+		underlineOff, invertOn, text("d"), invertOff, feed(tailFeed))
 
 	if got := stripCommands(in); string(got) != "abcd" {
 		t.Errorf("stripCommands = %q, want \"abcd\"", got)
