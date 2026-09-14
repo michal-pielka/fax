@@ -271,15 +271,17 @@ func TestFrameFitsThePaper(t *testing.T) {
 	}
 }
 
-// bandHeader is GS v 0 for a full-width band of n rows: 48 bytes a row.
-func bandHeader(n int) []byte {
-	return []byte{0x1d, 'v', '0', 0, 48, 0, byte(n), byte(n >> 8)}
-}
+// stored is GS * for a full-width piece of g groups of eight rows, and
+// printed is the GS / that follows each piece.
+func stored(g int) []byte { return []byte{0x1d, '*', 48, byte(g)} }
 
-func TestRenderPhotoPacksBits(t *testing.T) {
+var printed = []byte{0x1d, '/', 0}
+
+func TestRenderPhotoPacksColumns(t *testing.T) {
 	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, 3))
-	// White everywhere, then one black pixel top-left and one bottom-right:
-	// the first bit of the first byte, and the last bit of the last byte.
+	// White everywhere, then one black pixel top-left and one at the right
+	// edge on the third row: the top bit of the first column's byte, and the
+	// third bit down of the last column's.
 	for i := range img.Pix {
 		img.Pix[i] = 255
 	}
@@ -288,11 +290,11 @@ func TestRenderPhotoPacksBits(t *testing.T) {
 
 	got := body(t, RenderPhoto(img))
 
-	row0 := make([]byte, 48)
-	row0[0] = 0x80
-	row2 := make([]byte, 48)
-	row2[47] = 0x01
-	want := cat(bandHeader(3), row0, make([]byte, 48), row2)
+	// Three rows pad to one group of eight: one byte per column.
+	data := make([]byte, doc.PhotoWidth)
+	data[0] = 0x80
+	data[doc.PhotoWidth-1] = 0x20
+	want := cat(stored(1), data, printed)
 
 	if !bytes.Equal(got, want) {
 		t.Errorf("\ngot  %x\nwant %x", got, want)
@@ -308,25 +310,50 @@ func TestRenderPhotoThresholdsGrey(t *testing.T) {
 	}
 
 	got := body(t, RenderPhoto(img))
-	row := got[len(bandHeader(1)):]
+	data := got[len(stored(1)) : len(stored(1))+doc.PhotoWidth]
 
-	if row[0] != 0xff || row[47] != 0x00 {
-		t.Errorf("gradient row = %x: want black on the left, white on the right", row)
+	// One row in a group of eight: the top bit set on the dark left, clear on
+	// the light right, and the seven padding rows below always white.
+	if data[0] != 0x80 || data[doc.PhotoWidth-1] != 0x00 {
+		t.Errorf("gradient: left %#02x right %#02x, want 0x80 and 0x00", data[0], data[doc.PhotoWidth-1])
 	}
 }
 
-// The tallest picture allowed is still one command: the printer must not be
-// given a reason to start before it has everything.
-func TestRenderPhotoIsOneBand(t *testing.T) {
+// A square photo is two stored pieces: 256 rows is all the printer's memory
+// holds at full width, and the rest follows as a second piece.
+func TestRenderPhotoSplitsIntoPieces(t *testing.T) {
 	// A new Gray image is all zero, which is black: every bit set.
 	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, doc.PhotoMaxRows))
-	black := bytes.Repeat([]byte{0xff}, doc.PhotoMaxRows*48)
+	black := func(g int) []byte { return bytes.Repeat([]byte{0xff}, doc.PhotoWidth*g) }
 
 	got := body(t, RenderPhoto(img))
-	want := cat(bandHeader(doc.PhotoMaxRows), black)
+	want := cat(stored(32), black(32), printed, stored(16), black(16), printed)
 
 	if !bytes.Equal(got, want) {
-		t.Errorf("got %d bytes, want %d; first header %x", len(got), len(want), got[:8])
+		t.Errorf("got %d bytes, want %d; first header %x", len(got), len(want), got[:4])
+	}
+}
+
+// Column order: a black pixel on row 9 of column 5 lands in the second byte of
+// that column, which sits right after the column's first byte.
+func TestRenderPhotoColumnOrder(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, 16))
+	for i := range img.Pix {
+		img.Pix[i] = 255
+	}
+	img.SetGray(5, 9, color.Gray{0})
+
+	got := body(t, RenderPhoto(img))
+	data := got[len(stored(2)) : len(stored(2))+doc.PhotoWidth*2]
+
+	// Column 5 has two bytes at indexes 10 and 11; row 9 is bit 1 of group 1.
+	if data[5*2+1] != 0x40 {
+		t.Errorf("byte for column 5 group 1 = %#02x, want 0x40", data[5*2+1])
+	}
+	for i, v := range data {
+		if v != 0 && i != 11 {
+			t.Fatalf("unexpected byte %#02x at %d", v, i)
+		}
 	}
 }
 

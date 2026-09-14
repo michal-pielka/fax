@@ -46,9 +46,10 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
         ..Default::default()
     };
 
-    // Bounded: the main thread needs half a second per job, so anything
-    // faster grows heap forever on a board with 300 KB of it.
-    let (tx, rx) = mpsc::sync_channel(4);
+    // Bounded, and small: a job can be 32 KB and the board has 300 KB of
+    // heap. The dispatcher sends one job at a time and waits for its ack,
+    // so more than one in flight means a redelivery, not a queue.
+    let (tx, rx) = mpsc::sync_channel(2);
 
     // ESP-IDF hands a message over in pieces of its receive buffer, about a
     // kilobyte each. A text receipt is one piece; a photo is twenty. This is

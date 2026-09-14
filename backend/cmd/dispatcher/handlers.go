@@ -7,8 +7,8 @@ import (
 	"net/http"
 )
 
-// maxBody caps the request body. A rendered receipt is a few hundred bytes;
-// this is generous enough for a raster image later and still bounded.
+// maxBody caps the request body. A text receipt is a few hundred bytes and a
+// square photo about 19 KB; a megabyte is bounded and nowhere near either.
 const maxBody = 1 << 20 // 1 MiB
 
 type api struct {
