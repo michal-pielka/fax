@@ -1,72 +1,50 @@
-//! The thermal printer, over UART. The server renders the commands, so new
-//! formatting needs no reflash. The exception is the status queries below.
+//! The thermal printer's protocol: what to send, and how to read what it
+//! says back. The server renders the ESC/POS, so the only commands here are
+//! the two status queries. How the bytes reach the printer is a `Transport`,
+//! of which there is one today (uart.rs) and one to come (USB host on the
+//! ESP32-S3, where the printer's own USB port takes a photo in under a second
+//! instead of twenty).
 
 use std::time::{Duration, Instant};
 
-use esp_idf_svc::hal::delay::{TickType, BLOCK};
-use esp_idf_svc::hal::gpio::{AnyIOPin, InputPin, OutputPin};
-use esp_idf_svc::hal::uart::{config::Config as UartConfig, Uart, UartDriver};
-use esp_idf_svc::hal::units::Hertz;
-use esp_idf_svc::sys::{EspError, ESP_ERR_TIMEOUT};
+use esp_idf_svc::sys::EspError;
 
-/// Bytes handed to the driver at a time: a quarter second of wire.
-const CHUNK: usize = 256;
+/// A way of moving bytes to the printer and back. Implementations block:
+/// `write` returns once the printer has the bytes, not once a buffer has them.
+pub trait Transport {
+    /// Send a whole job, blocking until it has left this side.
+    fn write(&self, data: &[u8]) -> Result<(), EspError>;
 
-/// The printer's serial line.
-pub struct Port<'d> {
-    uart: UartDriver<'d>,
+    /// One byte from the printer, or `None` if none arrived within `timeout`.
+    fn read_byte(&self, timeout: Duration) -> Result<Option<u8>, EspError>;
+
+    /// Drop whatever the printer has sent and nobody has read.
+    fn discard_input(&self) -> Result<(), EspError>;
+
+    /// How long `bytes` take to reach the printer over this transport. The
+    /// status wait after a job allows this on top of a fixed margin, since a
+    /// printer still receiving cannot have answered yet.
+    fn transfer_time(&self, bytes: usize) -> Duration;
 }
 
-/// The 5-pin TTL header: 1 NC, 2 TX -> GPIO16, 3 RX <- GPIO17, 4 DTR, 5 GND.
-/// DTR is left unconnected in software: measured, it tracks neither the paper
-/// nor the buffer, staying low through a 19-second job. UART0 is the console.
-pub fn open<'d, U: Uart + 'd>(
-    uart: U,
-    tx: impl OutputPin + 'd,
-    rx: impl InputPin + 'd,
-    baud: u32,
-) -> Result<Port<'d>, EspError> {
-    let uart = UartDriver::new(
-        uart,
-        tx,
-        rx,
-        Option::<AnyIOPin>::None, // no CTS
-        Option::<AnyIOPin>::None, // no RTS
-        // The transmit buffer is the driver's, filled by us and drained by
-        // an interrupt. The default is 256 bytes, a quarter second at 9600
-        // baud, so a task holding the CPU that long starves the wire and the
-        // paper stutters. Eight seconds of slack instead.
-        &UartConfig::default()
-            .baudrate(Hertz(baud))
-            .tx_fifo_size(8 * 1024),
-    )?;
-
-    Ok(Port { uart })
+/// The printer, over some transport.
+pub struct Printer<T: Transport> {
+    link: T,
 }
 
-impl Port<'_> {
-    /// Write a rendered job and block until it is physically on the wire.
+/// The fixed part of the wait for a status byte: how long a printer that has
+/// the whole job may still take to answer. The dispatcher's ackTimeout allows
+/// this plus two seconds, so a printer that gives up gets to say why.
+const STATUS_WAIT: Duration = Duration::from_secs(5);
+
+impl<T: Transport> Printer<T> {
+    pub fn new(link: T) -> Self {
+        Self { link }
+    }
+
+    /// Write a rendered job and block until the printer has it.
     pub fn write(&self, data: &[u8]) -> Result<(), EspError> {
-        for chunk in data.chunks(CHUNK) {
-            // Never hand the driver more than its buffer has room for. Given
-            // a full buffer, ESP-IDF's write spins on the free-space count
-            // instead of sleeping, which starves the idle task and trips the
-            // watchdog after five seconds -- a photo takes twenty. Waiting
-            // here, with a real sleep, keeps the CPU shared for the job.
-            while self.uart.remaining_write()? < chunk.len() {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-
-            // A single write may be partial, so loop until it has all gone out.
-            let mut sent = 0;
-            while sent < chunk.len() {
-                sent += self.uart.write(&chunk[sent..])?;
-            }
-        }
-
-        // ESP-IDF returns before the bytes reach the wire, so without this we
-        // report a receipt printed from inside a driver buffer.
-        self.uart.wait_tx_done(BLOCK)
+        self.link.write(data)
     }
 
     /// Ask whether the printer has paper. `None` is "did not answer", not
@@ -74,15 +52,10 @@ impl Port<'_> {
     /// mid-job.
     pub fn has_paper(&self) -> Option<bool> {
         // Anything already buffered would be read as this query's reply.
-        self.uart.clear_rx().ok()?;
-        self.write(&[0x10, 0x04, 0x04]).ok()?;
+        self.link.discard_input().ok()?;
+        self.link.write(&[0x10, 0x04, 0x04]).ok()?;
 
-        let mut buf = [0u8; 1];
-        if self.uart.read(&mut buf, TickType::new_millis(300).ticks()).ok()? != 1 {
-            return None;
-        }
-
-        let status = buf[0];
+        let status = self.link.read_byte(Duration::from_millis(300)).ok()??;
 
         // Bits 1 and 4 are set in every status byte. If they are not, this is
         // a stray byte and guessing from it is worse than admitting we do not
@@ -97,32 +70,26 @@ impl Port<'_> {
         Some(status & 0b0110_0000 == 0)
     }
 
-    /// Wait for the printer to answer for the job just written. `false` means
-    /// it never did: jammed, unplugged, or silent. The answer comes once the
-    /// printer has worked through everything before the query: milliseconds
-    /// for text, and for a photo after the last stored piece has printed.
+    /// Wait for the printer to answer for a job of `job_bytes` just written.
+    /// `false` means it never did: jammed, unplugged, or silent. The answer
+    /// comes once the printer has parsed everything before the query, which
+    /// is milliseconds after the last byte arrives.
     ///
     /// The reply is one byte, but a stray byte can arrive first; anything
     /// that is not a status byte is read past rather than taken as a refusal.
-    pub fn wait_done(&self, timeout: Duration) -> bool {
-        if self.write(&[0x1D, 0x72, 0x01]).is_err() {
+    pub fn wait_done(&self, job_bytes: usize) -> bool {
+        if self.link.write(&[0x1D, 0x72, 0x01]).is_err() {
             return false;
         }
 
-        let deadline = Instant::now() + timeout;
-        let mut buf = [0u8; 1];
+        let deadline = Instant::now() + STATUS_WAIT + self.link.transfer_time(job_bytes);
 
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-            // The driver reports an empty wait as a timeout error; that is the
-            // normal case until the answer arrives, not a failure.
-            match self.uart.read(&mut buf, TickType::new_millis(left.as_millis() as u64).ticks()) {
-                Ok(1) => {}
-                Ok(_) => continue,
-                Err(e) if e.code() == ESP_ERR_TIMEOUT => return false,
+            let status = match self.link.read_byte(left) {
+                Ok(Some(b)) => b,
+                Ok(None) => return false,
                 Err(_) => return false,
-            }
-
-            let status = buf[0];
+            };
 
             // GS r has no fixed bits, so this is weak: only the low nibble is
             // defined, and this printer answers 0x00 with paper and 0x0c

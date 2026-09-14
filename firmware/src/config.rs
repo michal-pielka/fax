@@ -1,8 +1,6 @@
 //! Everything you would change without changing behaviour. Credentials are
 //! baked in via env!, so a missing one is a compile error rather than a bad flash.
 
-use std::time::Duration;
-
 pub const WIFI_SSID: &str = env!("WIFI_SSID");
 pub const WIFI_PASS: &str = env!("WIFI_PASS");
 
@@ -42,21 +40,3 @@ pub const MAX_JOB: usize = 32 * 1024;
 
 /// Printed on the printer's self-test page (hold feed, then power on).
 pub const BAUD_RATE: u32 = 9600;
-
-/// How long to wait for the printer's status byte after a job of `bytes`
-/// bytes. Text is answered within milliseconds. A photo is stored in the
-/// printer piece by piece and each piece printed from memory before the next
-/// command is read, so the answer comes after the last piece has printed: the
-/// job's own wire time again is a generous bound for that, on top of the
-/// fixed allowance. The dispatcher's ackTimeout mirrors this plus two seconds,
-/// so a printer that gives up gets to say why.
-pub fn print_timeout(bytes: usize) -> Duration {
-    PRINT_TIMEOUT + wire_time(bytes)
-}
-
-const PRINT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Time for `bytes` on the UART: ten bits a byte at BAUD_RATE.
-fn wire_time(bytes: usize) -> Duration {
-    Duration::from_micros(bytes as u64 * 10_000_000 / BAUD_RATE as u64)
-}

@@ -1,10 +1,11 @@
-//! Fax printer firmware: subscribe to a topic, write what arrives straight out
-//! of a UART. The server renders the ESC/POS, so this is a byte pump.
+//! Fax printer firmware: subscribe to a topic, hand what arrives to the
+//! printer. The server renders the ESC/POS, so this is a byte pump.
 
 mod config;
 mod mqtt;
 mod printer;
 mod time;
+mod uart;
 mod wifi;
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -30,12 +31,12 @@ fn main() -> Result<(), EspError> {
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
 
-    let printer = printer::open(
+    let printer = printer::Printer::new(uart::open(
         peripherals.uart1,
         peripherals.pins.gpio17, // our TX -> printer RX
         peripherals.pins.gpio16, // our RX <- printer TX
         config::BAUD_RATE,
-    )?;
+    )?);
 
     // Kept alive for the whole program: dropping it powers down the radio.
     let _wifi = wifi::connect(
@@ -80,7 +81,7 @@ fn main() -> Result<(), EspError> {
                 log::info!("printing {} bytes for {id}", payload.len());
                 printer.write(&payload)?;
 
-                if printer.wait_done(config::print_timeout(payload.len())) {
+                if printer.wait_done(payload.len()) {
                     log::info!("printed {id}");
                     ack(&mut client, &id, config::ACK_OK)?;
                 } else {
