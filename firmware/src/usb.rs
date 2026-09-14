@@ -231,7 +231,7 @@ impl Usb {
         let submitted = esp!(usb_host_transfer_submit(xfer));
         let result = match submitted {
             Err(e) => Err(e),
-            Ok(()) => match rx.recv_timeout(timeout + Duration::from_secs(2)) {
+            Ok(()) => match rx.recv_timeout(timeout) {
                 Ok((status, n)) if status == usb_transfer_status_t_USB_TRANSFER_STATUS_COMPLETED => {
                     if !out {
                         ptr::copy_nonoverlapping(x.data_buffer, data.as_mut_ptr(), n as usize);
@@ -244,8 +244,18 @@ impl Usb {
                     Err(EspError::from_infallible::<ESP_FAIL>())
                 }
                 Err(_) => {
-                    log::warn!("usb transfer on {ep:#04x} never completed");
-                    Err(EspError::from_infallible::<ESP_ERR_TIMEOUT>())
+                    // The library does not time transfers out on its own: a
+                    // read the printer never answers stays in flight until
+                    // told otherwise, and freeing it in that state is an
+                    // assertion failure inside the host stack. Halting the
+                    // endpoint and flushing it completes the transfer as
+                    // cancelled, on the client thread, which the channel
+                    // then reports; only after that may it be freed.
+                    usb_host_endpoint_halt(p.dev, ep);
+                    usb_host_endpoint_flush(p.dev, ep);
+                    let _ = rx.recv_timeout(Duration::from_secs(2));
+                    usb_host_endpoint_clear(p.dev, ep);
+                    Ok(None)
                 }
             },
         };
@@ -311,9 +321,11 @@ impl Transport for Usb {
         Ok(())
     }
 
-    /// Effectively instant: a photo is across in a few milliseconds. The
-    /// status wait's fixed margin does all the work.
-    fn transfer_time(&self, _bytes: usize) -> Duration {
-        Duration::from_millis(50)
+    /// The transfer itself is milliseconds. What the status wait must allow
+    /// for is the printing: the printer parses a raster as it prints it, so
+    /// its answer to a query behind a photo comes when the photo is nearly
+    /// out, and a row takes up to 50 ms -- about a millisecond per byte.
+    fn transfer_time(&self, bytes: usize) -> Duration {
+        Duration::from_micros(bytes as u64 * 1100)
     }
 }

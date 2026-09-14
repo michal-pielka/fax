@@ -21,10 +21,10 @@ pub trait Transport {
     /// Drop whatever the printer has sent and nobody has read.
     fn discard_input(&self) -> Result<(), EspError>;
 
-    /// How long `bytes` take to reach the printer over this transport. The
-    /// status wait after a job allows this on top of a fixed margin, since a
-    /// printer still receiving cannot have answered yet. Over USB it is next
-    /// to nothing; it existed for a serial wire.
+    /// How long after a job of `bytes` is sent the printer may still be too
+    /// busy with it to answer a status query: the time on the wire, and the
+    /// printing the printer does before it reads on. The status wait allows
+    /// this on top of a fixed margin.
     fn transfer_time(&self, bytes: usize) -> Duration;
 }
 
@@ -73,8 +73,8 @@ impl<T: Transport> Printer<T> {
 
     /// Wait for the printer to answer for a job of `job_bytes` just written.
     /// `false` means it never did: jammed, unplugged, or silent. The answer
-    /// comes once the printer has parsed everything before the query, which
-    /// is milliseconds after the last byte arrives.
+    /// comes once the printer has parsed everything before the query:
+    /// milliseconds after text, and after most of a photo has printed.
     ///
     /// The reply is one byte, but a stray byte can arrive first; anything
     /// that is not a status byte is read past rather than taken as a refusal.
