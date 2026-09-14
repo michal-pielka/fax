@@ -383,11 +383,11 @@
 
   /* The receipt's own type size, except on a window too short for it -- a
      laptop with the browser's chrome eating the height -- where the sheet
-     shrinks just enough to fit rather than scroll. The sheet is 27 lines
+     shrinks just enough to fit rather than scroll. The sheet is 28 lines
      tall; the subtraction is the dialog's padding. */
   .about .paper {
     position: relative;
-    font-size: min(var(--font-size), calc((100svh - 2.5rem) / 27));
+    font-size: min(var(--font-size), calc((100svh - 2.5rem) / 28.5));
   }
 
   /* Set exactly as the writing on a receipt: same face, same size, same
