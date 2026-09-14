@@ -5,24 +5,32 @@ use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::delay::{TickType, BLOCK};
 use esp_idf_svc::hal::gpio::{AnyIOPin, InputPin, OutputPin};
-use esp_idf_svc::hal::uart::{config::Config as UartConfig, Uart, UartDriver};
+use esp_idf_svc::hal::uart::{config::Config as UartConfig, config::FlowControl, Uart, UartDriver};
 use esp_idf_svc::hal::units::Hertz;
-use esp_idf_svc::sys::EspError;
+use esp_idf_svc::sys::{gpio_get_level, uart_set_hw_flow_ctrl, EspError};
 
 /// The 5-pin TTL header: 1 NC, 2 TX -> GPIO16, 3 RX <- GPIO17, 4 DTR ->
-/// GPIO23 (measured; does not track paper), 5 GND. UART0 is the USB console.
+/// GPIO23, 5 GND. UART0 is the USB console.
+///
+/// DTR is the printer's busy line, given to the UART as CTS: the hardware
+/// holds the next byte while the printer says busy and sends it the moment
+/// it stops, with no software in the loop and however much is queued. It
+/// does not track paper (measured), only the buffer.
 pub fn open<'d, U: Uart + 'd>(
     uart: U,
     tx: impl OutputPin + 'd,
     rx: impl InputPin + 'd,
+    busy: impl InputPin + 'd,
     baud: u32,
 ) -> Result<UartDriver<'d>, EspError> {
-    UartDriver::new(
+    let busy_pin = busy.pin();
+
+    let uart = UartDriver::new(
         uart,
         tx,
         rx,
-        Option::<AnyIOPin>::None, // no CTS
-        Option::<AnyIOPin>::None, // no RTS
+        Some(busy),
+        Option::<AnyIOPin>::None, // no RTS: we never tell the printer to wait
         // The transmit buffer is the driver's, filled by us and drained by
         // an interrupt. The default is 256 bytes, a quarter second at 9600
         // baud, so a task holding the CPU that long starves the wire and the
@@ -30,9 +38,23 @@ pub fn open<'d, U: Uart + 'd>(
         // fits in it twice over.
         &UartConfig::default()
             .baudrate(Hertz(baud))
+            .flow_control(FlowControl::CTS)
             .tx_fifo_size(8 * 1024)
             .rx_fifo_size(1024),
-    )
+    )?;
+
+    // The UART pauses while CTS is high. A line that is already high with
+    // the printer idle would stop every job before its first byte, so it is
+    // checked once here, and flow control is switched off rather than let a
+    // wiring surprise turn into a silent printer.
+    if unsafe { gpio_get_level(busy_pin as i32) } != 0 {
+        log::warn!("DTR is high while idle; not using it as busy -- check the wiring");
+        esp_idf_svc::sys::esp!(unsafe { uart_set_hw_flow_ctrl(uart.port(), 0, 0) })?;
+    } else {
+        log::info!("DTR low while idle; the UART will pause while the printer is busy");
+    }
+
+    Ok(uart)
 }
 
 /// Software flow control, which is what this printer has: XOFF when its

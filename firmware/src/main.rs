@@ -34,6 +34,7 @@ fn main() -> Result<(), EspError> {
         peripherals.uart1,
         peripherals.pins.gpio17, // our TX -> printer RX
         peripherals.pins.gpio16, // our RX <- printer TX
+        peripherals.pins.gpio23, // printer DTR, its busy line, as CTS
         config::BAUD_RATE,
     )?;
 
