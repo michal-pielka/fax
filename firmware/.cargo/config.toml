@@ -1,5 +1,7 @@
 [build]
-target = "xtensa-esp32-espidf"
+# The ESP32-S3: the one with a USB controller, so the printer's USB port can
+# replace its 9600 baud serial header.
+target = "xtensa-esp32s3-espidf"
 
 [target.'cfg(target_os = "espidf")']
 linker = "ldproxy"
@@ -10,7 +12,7 @@ rustflags = [ "--cfg",  "espidf_time64"]
 build-std = ["std", "panic_abort"]
 
 [env]
-MCU = "esp32"
+MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.5.3"
 ESP_IDF_TOOLS_INSTALL_DIR = "workspace"
 
