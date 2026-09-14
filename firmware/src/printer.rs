@@ -44,8 +44,17 @@ const XOFF: u8 = 0x13;
 /// Write a rendered job and block until it is physically on the wire,
 /// pausing when the printer asks.
 pub fn write(uart: &UartDriver, data: &[u8]) -> Result<(), EspError> {
-    for chunk in data.chunks(256) {
+    for chunk in data.chunks(CHUNK) {
         hold_if_asked(uart)?;
+
+        // Never hand the driver more than its buffer has room for. Given a
+        // full buffer, ESP-IDF's write spins on the free-space count instead
+        // of sleeping, which starves the idle task and trips the watchdog
+        // after five seconds -- a photo takes twenty. Waiting here, with a
+        // real sleep, keeps the CPU shared for the whole job.
+        while uart.remaining_write()? < chunk.len() {
+            std::thread::sleep(Duration::from_millis(20));
+        }
 
         // A single write may be partial, so loop until it has all gone out.
         let mut sent = 0;
@@ -58,6 +67,10 @@ pub fn write(uart: &UartDriver, data: &[u8]) -> Result<(), EspError> {
     // report a receipt printed from inside a driver buffer.
     uart.wait_tx_done(BLOCK)
 }
+
+/// Bytes handed to the driver at a time: a quarter second of wire, and the
+/// granularity at which the printer's XOFF is noticed.
+const CHUNK: usize = 256;
 
 /// Read whatever the printer has said since we last looked, and if the last
 /// word was XOFF, wait for XON. Up to a point: a printer that never says go
