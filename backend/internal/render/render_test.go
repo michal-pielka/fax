@@ -319,15 +319,20 @@ func TestRenderPhotoThresholdsGrey(t *testing.T) {
 	}
 }
 
-// A square photo is two stored pieces: 256 rows is all the printer's memory
-// holds at full width, and the rest follows as a second piece.
+// A square photo is three stored pieces of 128 rows: 6144 bytes is all the
+// printer's memory holds, and it refuses more.
 func TestRenderPhotoSplitsIntoPieces(t *testing.T) {
 	// A new Gray image is all zero, which is black: every bit set.
 	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, doc.PhotoMaxRows))
 	black := func(g int) []byte { return bytes.Repeat([]byte{0xff}, doc.PhotoWidth*g) }
 
 	got := body(t, RenderPhoto(img))
-	want := cat(stored(32), black(32), printed, stored(16), black(16), printed)
+	piece := cat(stored(16), black(16), printed)
+	want := cat(piece, piece, piece)
+
+	if len(black(16)) != 6144 {
+		t.Fatalf("a piece is %d bytes, want exactly the printer's 6144", len(black(16)))
+	}
 
 	if !bytes.Equal(got, want) {
 		t.Errorf("got %d bytes, want %d; first header %x", len(got), len(want), got[:4])

@@ -123,8 +123,9 @@ func Render(d doc.Document) []byte {
 // out in stutters from the point it got light. Instead each piece is stored
 // in the printer (GS *), which buffers it as it arrives, and then printed
 // from memory (GS /) at the head's own pace, in one motion. Printer memory
-// holds 1536 bytes of columns, which at full width is 256 rows, so a taller
-// photo is two pieces with a pause between while the second one loads.
+// holds 6144 bytes -- it says so itself when given more, in print -- which at
+// full width is 128 rows, so a square photo is three pieces with a pause
+// between each while the next one loads.
 func RenderPhoto(img image.Image) []byte {
 	var buf bytes.Buffer
 
@@ -143,10 +144,10 @@ func RenderPhoto(img image.Image) []byte {
 	return buf.Bytes()
 }
 
-// pieceRows is the most rows one stored bitmap holds at full width: the
-// printer's 1536-byte limit on x*y, with x = 48 bytes of width, gives y = 32
-// groups of eight rows.
-const pieceRows = 256
+// pieceRows is the most rows one stored bitmap holds at full width: 6144
+// bytes of bitmap over 48 bytes of width is 128 rows, y = 16 groups of eight.
+// The manual claims twice that; the printer disagreed, in print.
+const pieceRows = 128
 
 // storeAndPrint emits GS * x y d... then GS / 0 for rows [y0, y0+rows) of img.
 // The stored format is columns, not rows: each byte is eight dots down one
