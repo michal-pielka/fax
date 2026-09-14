@@ -79,11 +79,13 @@ fn main() -> Result<(), EspError> {
 
                 // A printer that is unplugged, off, or not taking bytes is a
                 // job that did not print, not a reason for the board to die.
+                let started = std::time::Instant::now();
                 if let Err(e) = printer.write(&payload) {
                     log::warn!("could not write {id}: {e}");
                     ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
                     continue;
                 }
+                log::info!("printer took {} bytes in {} ms", payload.len(), started.elapsed().as_millis());
 
                 if printer.wait_done(payload.len()) {
                     log::info!("printed {id}");

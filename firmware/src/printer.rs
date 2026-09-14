@@ -86,9 +86,11 @@ impl<T: Transport> Printer<T> {
         let deadline = Instant::now() + STATUS_WAIT + self.link.transfer_time(job_bytes);
 
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            // An empty read is "nothing yet", not "never": over USB the
+            // printer hands back empty packets while it is still busy.
             let status = match self.link.read_byte(left) {
                 Ok(Some(b)) => b,
-                Ok(None) => return false,
+                Ok(None) => continue,
                 Err(_) => return false,
             };
 
