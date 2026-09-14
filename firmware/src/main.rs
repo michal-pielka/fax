@@ -80,7 +80,7 @@ fn main() -> Result<(), EspError> {
                 log::info!("printing {} bytes for {id}", payload.len());
                 printer::write(&uart, &payload)?;
 
-                if printer::wait_done(&uart, config::PRINT_TIMEOUT) {
+                if printer::wait_done(&uart, config::print_timeout(payload.len())) {
                     log::info!("printed {id}");
                     ack(&mut client, &id, config::ACK_OK)?;
                 } else {

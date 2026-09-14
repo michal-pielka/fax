@@ -28,11 +28,13 @@ var (
 )
 
 // ackTimeout is how long to wait for the firmware's answer to a job of n
-// bytes: their time on the wire, then two seconds more than the firmware's
-// own PRINT_TIMEOUT, so a printer that gives up gets to say why rather than
-// leaving this to guess. The gateway's deadline must exceed this in turn.
+// bytes. The bytes take their wire time to reach the printer; the firmware
+// then allows the printer the same again to finish printing them, since a
+// dense photo prints slower than it arrives, plus five seconds; two more here
+// so a printer that gives up gets to say why rather than leaving this to
+// guess. The gateway's deadline must exceed this in turn.
 func ackTimeout(n int) time.Duration {
-	return wire.Time(n) + 7*time.Second
+	return 2*wire.Time(n) + 7*time.Second
 }
 
 // State is what the device last told us: the retained message it publishes on

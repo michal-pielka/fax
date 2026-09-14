@@ -24,12 +24,12 @@ import (
 // photo is under 20 KB as PNG, so the same cap serves both kinds.
 const maxBody = 64 << 10 // 64 KiB
 
-// printTimeout is how long to wait for the dispatcher: the bytes' time on the
-// wire, then the dispatcher's own margin for the firmware's answer, then ours.
+// printTimeout is how long to wait for the dispatcher: its own ackTimeout,
+// which allows the payload its wire time twice, plus three seconds of ours.
 // Text is a few hundred bytes and waits about ten seconds at most; a square
-// photo is 18 KB and gets its nineteen more.
+// photo is 18 KB and may wait close to fifty.
 func printTimeout(payload int) time.Duration {
-	return wire.Time(payload) + 10*time.Second
+	return 2*wire.Time(payload) + 10*time.Second
 }
 
 type api struct {

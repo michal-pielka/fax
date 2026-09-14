@@ -71,9 +71,9 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		// Must exceed the longest ackTimeout, or a print request that is
-		// legitimately waiting on a photo's bytes is cut off before it can
-		// answer. A square photo waits about 26 seconds.
-		WriteTimeout: 60 * time.Second,
+		// legitimately waiting on a photo is cut off before it can answer.
+		// A square photo may wait about 45 seconds.
+		WriteTimeout: 90 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 

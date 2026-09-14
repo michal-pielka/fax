@@ -60,9 +60,9 @@ func main() {
 		// Without these one slow client holds a connection open forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Must exceed the longest print: a square photo is about 30 seconds
-		// of wire plus the dispatcher's margin (see printTimeout).
-		WriteTimeout: 60 * time.Second,
+		// Must exceed the longest print: a square photo may wait close to
+		// fifty seconds (see printTimeout).
+		WriteTimeout: 90 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 

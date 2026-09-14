@@ -121,8 +121,8 @@ func TestAckTimeoutScalesWithPayload(t *testing.T) {
 		t.Errorf("ackTimeout(0) = %v, want 7s", got)
 	}
 
-	// 18 KB at 9600 baud is about 19 seconds.
-	if got := ackTimeout(18_000); got < 25*time.Second || got > 27*time.Second {
-		t.Errorf("ackTimeout(18000) = %v, want about 26s", got)
+	// 18 KB at 9600 baud is about 19 seconds on the wire, allowed twice.
+	if got := ackTimeout(18_000); got < 44*time.Second || got > 46*time.Second {
+		t.Errorf("ackTimeout(18000) = %v, want about 45s", got)
 	}
 }

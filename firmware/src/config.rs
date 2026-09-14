@@ -43,9 +43,20 @@ pub const MAX_JOB: usize = 32 * 1024;
 /// Printed on the printer's self-test page (hold feed, then power on).
 pub const BAUD_RATE: u32 = 9600;
 
-/// How long to wait for the printer's status byte after a job. It answers as
-/// soon as it has parsed the bytes, normally within milliseconds; the browser
-/// is waiting on this, so a silent printer gets seconds, not a minute. The
-/// dispatcher's ackTimeout is two seconds longer, so a printer that gives up
-/// gets to say why.
-pub const PRINT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long to wait for the printer's status byte after a job of `bytes`
+/// bytes. Text is parsed as it arrives and answered within milliseconds. A
+/// photo is printed as it is parsed, and dark rows print slower than the wire
+/// delivers them, so the printer may still be working through the job when
+/// the query lands: it gets the job's own wire time again, on top of the
+/// fixed allowance. The dispatcher's ackTimeout mirrors this plus two seconds,
+/// so a printer that gives up gets to say why.
+pub fn print_timeout(bytes: usize) -> Duration {
+    PRINT_TIMEOUT + wire_time(bytes)
+}
+
+const PRINT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Time for `bytes` on the UART: ten bits a byte at BAUD_RATE.
+fn wire_time(bytes: usize) -> Duration {
+    Duration::from_micros(bytes as u64 * 10_000_000 / BAUD_RATE as u64)
+}

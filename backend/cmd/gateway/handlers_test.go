@@ -186,8 +186,8 @@ func TestPrintTimeoutScalesWithPayload(t *testing.T) {
 		t.Errorf("text timeout = %v, want about 10s", small)
 	}
 
-	if large < 28*time.Second || large > 30*time.Second {
-		t.Errorf("photo timeout = %v, want about 29s", large)
+	if large < 47*time.Second || large > 49*time.Second {
+		t.Errorf("photo timeout = %v, want about 48s", large)
 	}
 }
 
