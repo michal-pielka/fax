@@ -62,9 +62,9 @@ func TestRenderPhotoEndpoint(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Two bands of 24 and 6 rows: the raster command appears twice.
-	if n := bytes.Count(out.Payload, []byte{0x1d, 'v', '0'}); n != 2 {
-		t.Errorf("raster command appears %d times, want 2", n)
+	// One raster command for the whole picture.
+	if n := bytes.Count(out.Payload, []byte{0x1d, 'v', '0'}); n != 1 {
+		t.Errorf("raster command appears %d times, want 1", n)
 	}
 }
 

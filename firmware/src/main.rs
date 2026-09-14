@@ -30,11 +30,11 @@ fn main() -> Result<(), EspError> {
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
 
-    let uart = printer::open(
+    let printer = printer::open(
         peripherals.uart1,
         peripherals.pins.gpio17, // our TX -> printer RX
         peripherals.pins.gpio16, // our RX <- printer TX
-        peripherals.pins.gpio23, // printer DTR, its busy line, as CTS
+        peripherals.pins.gpio23, // printer DTR, its busy line
         config::BAUD_RATE,
     )?;
 
@@ -72,16 +72,16 @@ fn main() -> Result<(), EspError> {
                 // and a stale answer either refuses a job that would have
                 // printed or blasts bytes at an empty slot. Silence is not
                 // "no paper" -- see has_paper -- so an unanswered query prints.
-                if printer::has_paper(&uart) == Some(false) {
+                if printer.has_paper() == Some(false) {
                     log::warn!("job {id} refused, no paper");
                     ack(&mut client, &id, config::ACK_NO_PAPER)?;
                     continue;
                 }
 
                 log::info!("printing {} bytes for {id}", payload.len());
-                printer::write(&uart, &payload)?;
+                printer.write(&payload)?;
 
-                if printer::wait_done(&uart, config::print_timeout(payload.len())) {
+                if printer.wait_done(config::print_timeout(payload.len())) {
                     log::info!("printed {id}");
                     ack(&mut client, &id, config::ACK_OK)?;
                 } else {

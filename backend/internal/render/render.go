@@ -128,10 +128,12 @@ func RenderPhoto(img image.Image) []byte {
 	return buf.Bytes()
 }
 
-// rasterBand is rows per GS v 0 command. Small bands keep the printer's
-// buffer shallow and let it start moving paper before the whole picture has
-// arrived over a 9600 baud wire.
-const rasterBand = 24
+// rasterBand is rows per GS v 0 command. The whole picture in one: on a
+// 9600 baud wire the head outruns the data on any light row, and a picture
+// fed in small bands stutters. A printer that finishes receiving a command
+// before printing it will hold the picture and print it in one motion.
+// (Experiment, 2026-09-14: bands of 24 rows stuttered from about 40% down.)
+const rasterBand = doc.PhotoMaxRows
 
 // raster emits GS v 0 m xL xH yL yH d1..dk: x is bytes per row, y rows, then
 // the rows themselves, eight pixels a byte, leftmost pixel in the high bit,

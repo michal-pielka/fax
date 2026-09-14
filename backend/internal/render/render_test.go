@@ -315,18 +315,18 @@ func TestRenderPhotoThresholdsGrey(t *testing.T) {
 	}
 }
 
-func TestRenderPhotoSplitsIntoBands(t *testing.T) {
+// The tallest picture allowed is still one command: the printer must not be
+// given a reason to start before it has everything.
+func TestRenderPhotoIsOneBand(t *testing.T) {
 	// A new Gray image is all zero, which is black: every bit set.
-	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, 50))
-	black := func(rows int) []byte { return bytes.Repeat([]byte{0xff}, rows*48) }
+	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, doc.PhotoMaxRows))
+	black := bytes.Repeat([]byte{0xff}, doc.PhotoMaxRows*48)
 
 	got := body(t, RenderPhoto(img))
-
-	// 24 + 24 + 2 rows, each band a header plus its rows.
-	want := cat(bandHeader(24), black(24), bandHeader(24), black(24), bandHeader(2), black(2))
+	want := cat(bandHeader(doc.PhotoMaxRows), black)
 
 	if !bytes.Equal(got, want) {
-		t.Errorf("bands: got %d bytes, want %d; first header %x", len(got), len(want), got[:8])
+		t.Errorf("got %d bytes, want %d; first header %x", len(got), len(want), got[:8])
 	}
 }
 
