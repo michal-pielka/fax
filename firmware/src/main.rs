@@ -5,7 +5,7 @@ mod config;
 mod mqtt;
 mod printer;
 mod time;
-mod uart;
+mod usb;
 mod wifi;
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -31,12 +31,9 @@ fn main() -> Result<(), EspError> {
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
 
-    let printer = printer::Printer::new(uart::open(
-        peripherals.uart1,
-        peripherals.pins.gpio17, // our TX -> printer RX
-        peripherals.pins.gpio16, // our RX <- printer TX
-        config::BAUD_RATE,
-    )?);
+    // The printer, on the S3's USB port. It need not be there yet: jobs
+    // wait for it, and it may come and go.
+    let printer = printer::Printer::new(usb::open()?);
 
     // Kept alive for the whole program: dropping it powers down the radio.
     let _wifi = wifi::connect(
@@ -79,7 +76,14 @@ fn main() -> Result<(), EspError> {
                 }
 
                 log::info!("printing {} bytes for {id}", payload.len());
-                printer.write(&payload)?;
+
+                // A printer that is unplugged, off, or not taking bytes is a
+                // job that did not print, not a reason for the board to die.
+                if let Err(e) = printer.write(&payload) {
+                    log::warn!("could not write {id}: {e}");
+                    ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
+                    continue;
+                }
 
                 if printer.wait_done(payload.len()) {
                     log::info!("printed {id}");
