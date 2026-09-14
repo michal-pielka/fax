@@ -70,9 +70,10 @@ func main() {
 		Handler:           logging.Requests(log)(a.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Must exceed ackTimeout, or a print request that is legitimately
-		// waiting on the printer is cut off before it can answer.
-		WriteTimeout: 15 * time.Second,
+		// Must exceed the longest ackTimeout, or a print request that is
+		// legitimately waiting on a photo's bytes is cut off before it can
+		// answer. A square photo waits about 26 seconds.
+		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 

@@ -37,6 +37,12 @@ services:
       - "-addr=:8080"
       - "-renderer=http://renderer:8081"
       - "-dispatcher=http://dispatcher:8082"
+      - "-photos-dir=/var/lib/fax/photos"
+    # A copy of every printed photo, the way printed text is in the logs.
+    # Not rotated: a square photo is under 20 KB, so a full volume is months
+    # of strangers away, and it is the only record of what came out.
+    volumes:
+      - photos:/var/lib/fax/photos
     depends_on: [renderer, dispatcher]
 
   renderer:
@@ -84,3 +90,4 @@ services:
 volumes:
   caddy-data:
   mosquitto-data:
+  photos:

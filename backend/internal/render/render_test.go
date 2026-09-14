@@ -2,6 +2,8 @@ package render
 
 import (
 	"bytes"
+	"image"
+	"image/color"
 	"testing"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
@@ -266,5 +268,77 @@ func TestFrameFitsThePaper(t *testing.T) {
 		if len(line) > cols {
 			t.Errorf("%q is %d columns, over %d", line, len(line), cols)
 		}
+	}
+}
+
+// bandHeader is GS v 0 for a full-width band of n rows: 48 bytes a row.
+func bandHeader(n int) []byte {
+	return []byte{0x1d, 'v', '0', 0, 48, 0, byte(n), byte(n >> 8)}
+}
+
+func TestRenderPhotoPacksBits(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, 3))
+	// White everywhere, then one black pixel top-left and one bottom-right:
+	// the first bit of the first byte, and the last bit of the last byte.
+	for i := range img.Pix {
+		img.Pix[i] = 255
+	}
+	img.SetGray(0, 0, color.Gray{0})
+	img.SetGray(doc.PhotoWidth-1, 2, color.Gray{0})
+
+	got := body(t, RenderPhoto(img))
+
+	row0 := make([]byte, 48)
+	row0[0] = 0x80
+	row2 := make([]byte, 48)
+	row2[47] = 0x01
+	want := cat(bandHeader(3), row0, make([]byte, 48), row2)
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("\ngot  %x\nwant %x", got, want)
+	}
+}
+
+// Grey is decided at mid-point, so a caller who skipped the dithering still
+// gets something rather than a decode error.
+func TestRenderPhotoThresholdsGrey(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, 1))
+	for x := range doc.PhotoWidth {
+		img.SetGray(x, 0, color.Gray{uint8(x * 255 / (doc.PhotoWidth - 1))})
+	}
+
+	got := body(t, RenderPhoto(img))
+	row := got[len(bandHeader(1)):]
+
+	if row[0] != 0xff || row[47] != 0x00 {
+		t.Errorf("gradient row = %x: want black on the left, white on the right", row)
+	}
+}
+
+func TestRenderPhotoSplitsIntoBands(t *testing.T) {
+	// A new Gray image is all zero, which is black: every bit set.
+	img := image.NewGray(image.Rect(0, 0, doc.PhotoWidth, 50))
+	black := func(rows int) []byte { return bytes.Repeat([]byte{0xff}, rows*48) }
+
+	got := body(t, RenderPhoto(img))
+
+	// 24 + 24 + 2 rows, each band a header plus its rows.
+	want := cat(bandHeader(24), black(24), bandHeader(24), black(24), bandHeader(2), black(2))
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("bands: got %d bytes, want %d; first header %x", len(got), len(want), got[:8])
+	}
+}
+
+// A picture receipt is still a FAX receipt: same masthead, same tear-off.
+func TestRenderPhotoKeepsTheFrame(t *testing.T) {
+	got := RenderPhoto(image.NewGray(image.Rect(0, 0, doc.PhotoWidth, 1)))
+
+	if !bytes.HasPrefix(got, reset) || !bytes.HasSuffix(got, feed(tailFeed)) {
+		t.Error("photo receipt is missing the reset or the feed")
+	}
+
+	if !bytes.Contains(got, []byte(title)) || !bytes.Contains(got, []byte(footer[0])) {
+		t.Error("photo receipt is missing the frame text")
 	}
 }

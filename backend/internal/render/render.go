@@ -2,6 +2,8 @@ package render
 
 import (
 	"bytes"
+	"image"
+	"image/color"
 	"strings"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
@@ -31,7 +33,7 @@ var (
 
 // cols is the printer's character width at the default font. The title prints
 // at double width, so it has half as many.
-const cols = 32
+const cols = doc.Cols
 
 // The frame around every receipt. Lines must fit cols, the title cols/2;
 // TestFrameFitsThePaper fails the build otherwise.
@@ -108,6 +110,60 @@ func Render(d doc.Document) []byte {
 	buf.Write(feed(tailFeed))
 
 	return buf.Bytes()
+}
+
+// RenderPhoto returns the bytes for a picture receipt: the same frame as a
+// text one, with rows of dots where the words would be. The image is
+// PhotoWidth wide -- the caller validated that -- and any pixel darker than
+// mid-grey prints. The browser dithered it; this only packs bits.
+func RenderPhoto(img image.Image) []byte {
+	var buf bytes.Buffer
+
+	buf.Write(reset)
+	writeHeader(&buf)
+	raster(&buf, img)
+	writeFooter(&buf)
+	buf.Write(feed(tailFeed))
+
+	return buf.Bytes()
+}
+
+// rasterBand is rows per GS v 0 command. Small bands keep the printer's
+// buffer shallow and let it start moving paper before the whole picture has
+// arrived over a 9600 baud wire.
+const rasterBand = 24
+
+// raster emits GS v 0 m xL xH yL yH d1..dk: x is bytes per row, y rows, then
+// the rows themselves, eight pixels a byte, leftmost pixel in the high bit,
+// one for black.
+func raster(buf *bytes.Buffer, img image.Image) {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	perRow := (w + 7) / 8
+
+	for y0 := 0; y0 < h; y0 += rasterBand {
+		n := min(rasterBand, h-y0)
+		buf.Write([]byte{0x1d, 'v', '0', 0, byte(perRow), byte(perRow >> 8), byte(n), byte(n >> 8)})
+
+		row := make([]byte, perRow)
+		for y := y0; y < y0+n; y++ {
+			clear(row)
+
+			for x := range w {
+				if dark(img.At(b.Min.X+x, b.Min.Y+y)) {
+					row[x/8] |= 0x80 >> (x % 8)
+				}
+			}
+
+			buf.Write(row)
+		}
+	}
+}
+
+// dark is the one decision made about a pixel. A dithered picture is already
+// pure black and white, so this only matters for a caller who sent grey.
+func dark(c color.Color) bool {
+	return color.GrayModel.Convert(c).(color.Gray).Y < 128
 }
 
 func writeHeader(buf *bytes.Buffer) {

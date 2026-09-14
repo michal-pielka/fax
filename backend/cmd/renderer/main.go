@@ -17,11 +17,6 @@ import (
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
-// maxRunes matches the gateway's, checked again rather than trusted: Render
-// assumes byte offsets are character positions, which holds only if validated.
-// A full page is 9 rows of 32 columns plus the 8 newlines between them.
-const maxRunes = 296
-
 func main() {
 	addr := flag.String("addr", ":8081", "listen address")
 	logFormat := flag.String("log-format", "json", "log format: json or text")
@@ -34,8 +29,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validated again rather than trusted: Render assumes byte offsets are
+	// character positions, which holds only for what Validate lets through.
 	a := &api{
-		limits: doc.Limits{MaxRunes: maxRunes},
+		limits: doc.Paper,
 		log:    log,
 	}
 

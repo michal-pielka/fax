@@ -13,6 +13,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/michal-pielka/fax/server/internal/logging"
+	"github.com/michal-pielka/fax/server/internal/wire"
 )
 
 // Errors the printer itself is responsible for, as opposed to the dispatcher
@@ -26,10 +27,13 @@ var (
 	ErrNoConfirmation = errors.New("printer did not confirm; it may still have printed")
 )
 
-// ackTimeout must exceed the firmware's PRINT_TIMEOUT, so a printer that gives
-// up gets to say why rather than leaving this to guess. The gateway's client
-// timeout must in turn exceed this, or the request ends before the answer.
-const ackTimeout = 7 * time.Second
+// ackTimeout is how long to wait for the firmware's answer to a job of n
+// bytes: their time on the wire, then two seconds more than the firmware's
+// own PRINT_TIMEOUT, so a printer that gives up gets to say why rather than
+// leaving this to guess. The gateway's deadline must exceed this in turn.
+func ackTimeout(n int) time.Duration {
+	return wire.Time(n) + 7*time.Second
+}
 
 // State is what the device last told us: the retained message it publishes on
 // connect, or the last will the broker publishes when it vanishes. The zero
@@ -280,7 +284,7 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	// while the job is still on it.
 	done := make(chan error, 1)
 
-	go func() { done <- d.awaitAck(id, acks) }()
+	go func() { done <- d.awaitAck(id, acks, ackTimeout(len(payload))) }()
 
 	select {
 	case err := <-done:
@@ -292,7 +296,7 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 
 // awaitAck turns the firmware's answer into an error, and frees the printer
 // whatever the answer was.
-func (d *Device) awaitAck(id string, acks <-chan ack) error {
+func (d *Device) awaitAck(id string, acks <-chan ack, timeout time.Duration) error {
 	defer d.stopWaiting(id)
 
 	select {
@@ -309,7 +313,7 @@ func (d *Device) awaitAck(id string, acks <-chan ack) error {
 			return fmt.Errorf("printer refused: %s", a.Error)
 		}
 
-	case <-time.After(ackTimeout):
+	case <-time.After(timeout):
 		// The receipt may well be in the printer right now. All that is
 		// certain is that nobody said so.
 		d.log.Warn("no acknowledgement", "trace", id)

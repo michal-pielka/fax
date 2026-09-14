@@ -5,12 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/logging"
@@ -21,11 +26,19 @@ type fakeRenderer struct {
 	err     error
 	calls   int
 	got     doc.Document
+	gotPNG  []byte
 }
 
 func (f *fakeRenderer) Render(_ context.Context, d doc.Document) ([]byte, error) {
 	f.calls++
 	f.got = d
+
+	return f.payload, f.err
+}
+
+func (f *fakeRenderer) RenderPhoto(_ context.Context, png []byte) ([]byte, error) {
+	f.calls++
+	f.gotPNG = png
 
 	return f.payload, f.err
 }
@@ -56,7 +69,7 @@ func newAPI(r Renderer, d Dispatcher) *api {
 	return &api{
 		renderer:   r,
 		dispatcher: d,
-		limits:     doc.Limits{MaxRunes: 255},
+		limits:     doc.Paper,
 		log:        log,
 	}
 }
@@ -64,13 +77,118 @@ func newAPI(r Renderer, d Dispatcher) *api {
 func do(t *testing.T, a *api, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	var ct string
+	if method == http.MethodPost {
+		ct = "application/json"
+	}
+
+	return doAs(t, a, method, path, ct, strings.NewReader(body))
+}
+
+func doAs(t *testing.T, a *api, method, path, contentType string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+
 	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, body)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 	// Wrapped exactly as main.go wraps it: the print handler takes its job id
 	// from the trace, so a bare routes() would hand the dispatcher an empty one.
 	h := logging.Requests(slog.New(slog.NewTextHandler(io.Discard, nil)))(a.routes())
-	h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+	h.ServeHTTP(rec, req)
 
 	return rec
+}
+
+func pngOf(t *testing.T, w, h int) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewGray(image.Rect(0, 0, w, h))); err != nil {
+		t.Fatal(err)
+	}
+
+	return buf.Bytes()
+}
+
+func TestPrintPhotoHappyPath(t *testing.T) {
+	r := &fakeRenderer{payload: []byte("\x1b@\x1dv0...")}
+	d := &fakeDispatcher{}
+	a := newAPI(r, d)
+	a.photos = t.TempDir()
+	pic := pngOf(t, doc.PhotoWidth, 40)
+
+	rec := doAs(t, a, http.MethodPost, "/api/print", "image/png", bytes.NewReader(pic))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
+	}
+
+	// The renderer gets the PNG untouched: the gateway reads its header and
+	// nothing else.
+	if !bytes.Equal(r.gotPNG, pic) {
+		t.Error("renderer did not receive the PNG as sent")
+	}
+
+	if string(d.gotPayl) != string(r.payload) {
+		t.Error("dispatcher did not receive the renderer's payload")
+	}
+
+	var out map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+
+	kept, err := os.ReadFile(filepath.Join(a.photos, out["id"]+".png"))
+	if err != nil || !bytes.Equal(kept, pic) {
+		t.Errorf("photo not kept under its id: %v", err)
+	}
+}
+
+// Bad pictures never reach the renderer: the header is enough to refuse.
+func TestPrintPhotoRejects(t *testing.T) {
+	tests := map[string][]byte{
+		"wrong width": pngOf(t, doc.PhotoWidth-1, 10),
+		"too tall":    pngOf(t, doc.PhotoWidth, doc.PhotoMaxRows+1),
+		"not a png":   []byte("definitely not"),
+		"empty":       nil,
+	}
+
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := &fakeRenderer{}
+			rec := doAs(t, newAPI(r, &fakeDispatcher{}), http.MethodPost, "/api/print", "image/png", bytes.NewReader(body))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body)
+			}
+
+			if r.calls != 0 {
+				t.Errorf("renderer called %d times, want 0", r.calls)
+			}
+		})
+	}
+}
+
+func TestPrintRefusesOtherContentTypes(t *testing.T) {
+	for _, ct := range []string{"", "text/plain", "image/jpeg", "multipart/form-data"} {
+		rec := doAs(t, newAPI(&fakeRenderer{}, &fakeDispatcher{}), http.MethodPost, "/api/print", ct, strings.NewReader("x"))
+		if rec.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("%q: status = %d, want 415", ct, rec.Code)
+		}
+	}
+}
+
+// Text waits a flat ten seconds; a picture waits for its bytes as well.
+func TestPrintTimeoutScalesWithPayload(t *testing.T) {
+	small, large := printTimeout(300), printTimeout(18_000)
+
+	if small < 10*time.Second || small > 11*time.Second {
+		t.Errorf("text timeout = %v, want about 10s", small)
+	}
+
+	if large < 28*time.Second || large > 30*time.Second {
+		t.Errorf("photo timeout = %v, want about 29s", large)
+	}
 }
 
 const validBody = `{"text":"hello"}`
@@ -199,6 +317,7 @@ func TestRejectionsAreLogged(t *testing.T) {
 	a.log = log
 
 	req := httptest.NewRequest(http.MethodPost, "/api/print", strings.NewReader(`{"text":"Kraków"}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-For", "203.0.113.9")
 	req.Header.Set(logging.TraceHeader, "trace-me")
 	logging.Requests(log)(a.routes()).ServeHTTP(httptest.NewRecorder(), req)

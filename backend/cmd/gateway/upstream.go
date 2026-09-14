@@ -16,6 +16,8 @@ import (
 // either service running.
 type Renderer interface {
 	Render(ctx context.Context, d doc.Document) ([]byte, error)
+	// RenderPhoto takes the PNG as received; the renderer decodes it.
+	RenderPhoto(ctx context.Context, png []byte) ([]byte, error)
 }
 
 type Dispatcher interface {
@@ -63,22 +65,22 @@ func (c *jsonClient) post(ctx context.Context, path string, in, out any) error {
 		return err
 	}
 
-	return c.do(ctx, http.MethodPost, path, bytes.NewReader(b), out)
+	return c.do(ctx, http.MethodPost, path, "application/json", bytes.NewReader(b), out)
 }
 
 func (c *jsonClient) get(ctx context.Context, path string, out any) error {
-	return c.do(ctx, http.MethodGet, path, nil, out)
+	return c.do(ctx, http.MethodGet, path, "", nil, out)
 }
 
-func (c *jsonClient) do(ctx context.Context, method, path string, body io.Reader, out any) error {
+func (c *jsonClient) do(ctx context.Context, method, path, contentType string, body io.Reader, out any) error {
 	// The inbound handler's context, so a closed tab unwinds the whole chain.
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
 		return err
 	}
 
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	// The same id the gateway logged, so the renderer's and dispatcher's own
@@ -118,6 +120,17 @@ func NewRendererClient(base string, hc *http.Client) Renderer {
 func (c *rendererClient) Render(ctx context.Context, d doc.Document) ([]byte, error) {
 	var out renderResponse
 	if err := c.post(ctx, "/internal/render", d, &out); err != nil {
+		return nil, err
+	}
+
+	return out.Payload, nil
+}
+
+// RenderPhoto forwards the PNG as it came: same route, a different content
+// type, exactly as the browser sent it to us.
+func (c *rendererClient) RenderPhoto(ctx context.Context, png []byte) ([]byte, error) {
+	var out renderResponse
+	if err := c.do(ctx, http.MethodPost, "/internal/render", "image/png", bytes.NewReader(png), &out); err != nil {
 		return nil, err
 	}
 

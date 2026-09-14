@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"image/png"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"unicode/utf8"
 
@@ -11,8 +15,9 @@ import (
 	"github.com/michal-pielka/fax/server/internal/render"
 )
 
-// maxBody caps the body before the decoder sees it. Validate stops a large
-// document; only this stops one that never stops arriving.
+// maxBody caps the body before anything reads it. Validate stops a large
+// document; only this stops one that never stops arriving. A dithered square
+// photo is under 20 KB as PNG, so the same cap serves both kinds.
 const maxBody = 64 << 10 // 64 KiB
 
 type api struct {
@@ -37,9 +42,24 @@ type renderResponse struct {
 	Payload []byte `json:"payload"`
 }
 
+// render is one route with two bodies. The content type says which: a JSON
+// document, or a PNG that is already the printer's bitmap. Nothing else.
 func (a *api) render(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+
+	switch ct {
+	case "application/json":
+		a.renderText(w, r)
+	case "image/png":
+		a.renderPhoto(w, r)
+	default:
+		writeError(w, http.StatusUnsupportedMediaType, "send application/json or image/png")
+	}
+}
+
+func (a *api) renderText(w http.ResponseWriter, r *http.Request) {
 	var d doc.Document
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields() // a typo'd field is a 400, not silent data loss
@@ -69,6 +89,33 @@ func (a *api) render(w http.ResponseWriter, r *http.Request) {
 		"spans", len(d.Spans),
 		"bytes", len(payload),
 	)
+
+	writeJSON(w, http.StatusOK, renderResponse{Payload: payload})
+}
+
+// renderPhoto trusts nothing about the bytes until the header has been read:
+// the size check bounds what the decoder may allocate before it runs.
+func (a *api) renderPhoto(w http.ResponseWriter, r *http.Request) {
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "photo too large or unreadable")
+		return
+	}
+
+	cfg, err := doc.ValidatePhoto(bytes.NewReader(b))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	img, err := png.Decode(bytes.NewReader(b))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "not a PNG: "+err.Error())
+		return
+	}
+
+	payload := render.RenderPhoto(img)
+	a.log.DebugContext(r.Context(), "rendered", "rows", cfg.Height, "bytes", len(payload))
 
 	writeJSON(w, http.StatusOK, renderResponse{Payload: payload})
 }

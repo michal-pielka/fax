@@ -1,25 +1,45 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"time"
 	"unicode/utf8"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/logging"
+	"github.com/michal-pielka/fax/server/internal/wire"
 )
 
-// maxBody caps the body before the decoder sees it. Validate stops a large
-// document; only this stops one that never stops arriving.
+// maxBody caps the body before anything reads it. Validate stops a large
+// document; only this stops one that never stops arriving. A dithered square
+// photo is under 20 KB as PNG, so the same cap serves both kinds.
 const maxBody = 64 << 10 // 64 KiB
+
+// printTimeout is how long to wait for the dispatcher: the bytes' time on the
+// wire, then the dispatcher's own margin for the firmware's answer, then ours.
+// Text is a few hundred bytes and waits about ten seconds at most; a square
+// photo is 18 KB and gets its nineteen more.
+func printTimeout(payload int) time.Duration {
+	return wire.Time(payload) + 10*time.Second
+}
 
 type api struct {
 	renderer   Renderer
 	dispatcher Dispatcher
 	limits     doc.Limits
-	log        *slog.Logger
+	// photos is a directory to keep a copy of every picture printed, or
+	// empty. Text is logged in full; this is the same courtesy for pictures.
+	photos string
+	log    *slog.Logger
 }
 
 func (a *api) routes() *http.ServeMux {
@@ -32,9 +52,25 @@ func (a *api) routes() *http.ServeMux {
 	return mux
 }
 
+// print is one door with two shapes of parcel. The content type says which:
+// a JSON document, or a PNG that is already the printer's bitmap. Anything
+// else is refused rather than guessed at.
 func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+
+	switch ct {
+	case "application/json":
+		a.printText(w, r)
+	case "image/png":
+		a.printPhoto(w, r)
+	default:
+		a.fail(w, r, http.StatusUnsupportedMediaType, "send application/json or image/png")
+	}
+}
+
+func (a *api) printText(w http.ResponseWriter, r *http.Request) {
 	var d doc.Document
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields() // a typo'd field is a 400, not silent data loss
@@ -65,28 +101,76 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The message is logged on purpose: it is about to be printed and read
+	// anyway, and nothing else records what a stranger sent.
+	a.send(w, r, payload, "kind", "text",
+		"chars", utf8.RuneCountInString(d.Text),
+		"text", logging.Truncate(d.Text, 512),
+	)
+}
+
+// printPhoto takes a PNG that the browser has already scaled to the paper and
+// dithered. Only the header is read here; the renderer decodes the rest once
+// the size is known good.
+func (a *api) printPhoto(w http.ResponseWriter, r *http.Request) {
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		a.fail(w, r, http.StatusBadRequest, "photo too large or unreadable")
+		return
+	}
+
+	cfg, err := doc.ValidatePhoto(bytes.NewReader(b))
+	if err != nil {
+		a.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	a.keep(r.Context(), b)
+
+	payload, err := a.renderer.RenderPhoto(r.Context(), b)
+	if err != nil {
+		a.upstreamFailed(w, r, "renderer", err)
+		return
+	}
+
+	a.send(w, r, payload, "kind", "photo", "rows", cfg.Height)
+}
+
+// send is the half of printing that does not care what is being printed:
+// hand the bytes to the dispatcher, wait for the printer's answer, report.
+func (a *api) send(w http.ResponseWriter, r *http.Request, payload []byte, attrs ...any) {
 	// The trace id is the job id, so one grep follows a receipt from here to
 	// the firmware. Stored nowhere: it lives as long as the request.
 	id := logging.Trace(r.Context())
 
-	// Blocks until the firmware has answered for the job: about a second of
-	// UART time and two broker hops. The errors below are that answer.
-	if err := a.dispatcher.Print(r.Context(), id, payload); err != nil {
+	// Blocks until the firmware has answered for the job. For text that is
+	// about a second; for a picture, however long its bytes take on the wire.
+	ctx, cancel := context.WithTimeout(r.Context(), printTimeout(len(payload)))
+	defer cancel()
+
+	if err := a.dispatcher.Print(ctx, id, payload); err != nil {
 		a.upstreamFailed(w, r, "dispatcher", err)
 		return
 	}
 
-	// The message is logged on purpose: it is about to be printed and read
-	// anyway, and nothing else records what a stranger sent.
-	a.log.InfoContext(r.Context(), "printed",
-		"chars", utf8.RuneCountInString(d.Text),
-		"bytes", len(payload),
-		"text", logging.Truncate(d.Text, 512),
-	)
+	a.log.InfoContext(r.Context(), "printed", append([]any{"bytes", len(payload)}, attrs...)...)
 
 	// 200: the printer took the bytes and answered with paper in. The id is
 	// the reference printed on the receipt and the trace in the logs.
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "printed"})
+}
+
+// keep writes the picture to the photos directory under its trace id. A
+// failure is logged and ignored: the trail matters, the print more.
+func (a *api) keep(ctx context.Context, png []byte) {
+	if a.photos == "" {
+		return
+	}
+
+	name := filepath.Join(a.photos, logging.Trace(ctx)+".png")
+	if err := os.WriteFile(name, png, 0o644); err != nil {
+		a.log.ErrorContext(ctx, "cannot keep photo", "path", name, "err", err)
+	}
 }
 
 func (a *api) state(w http.ResponseWriter, r *http.Request) {

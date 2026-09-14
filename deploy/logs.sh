@@ -67,7 +67,8 @@ prints)
 	# The record of what has actually been sent to the paper: logged only
 	# after the firmware acknowledged the job.
 	stream | jq -r 'select(.msg == "printed")
-		| "\(.time[0:19] | sub("T"; " "))  \(.trace[0:8])  \(.chars)c  \(.text)"'
+		| "\(.time[0:19] | sub("T"; " "))  \(.trace[0:8])  \(
+			if .kind == "photo" then "[photo, \(.rows) rows]" else "\(.chars)c  \(.text)" end)"'
 	;;
 errors)
 	stream | jq -r 'select(.level == "WARN" or .level == "ERROR")
@@ -99,7 +100,7 @@ caller)
 	# the trace id joins them. A refused attempt has a status but no text.
 	stream | jq -sr --arg ip "$2" '
 		[ .[] | select(.msg == "request" and .path == "/api/print" and .ip == $ip) ] as $reqs
-		| ([ .[] | select(.msg == "printed") | {key: .trace, value: .text} ] | from_entries) as $texts
+		| ([ .[] | select(.msg == "printed") | {key: .trace, value: (.text // "[photo, \(.rows) rows]")} ] | from_entries) as $texts
 		| $reqs | sort_by(.time)[]
 		| "\(.time[0:19] | sub("T"; " "))  \(.trace[0:8])  \(.status)  \($texts[.trace] // "-")"'
 	;;

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestNewTopics(t *testing.T) {
@@ -102,7 +103,7 @@ func TestAwaitAckMapsTheAnswer(t *testing.T) {
 			ch := d.waiting["job"]
 			ch <- tt.ack
 
-			if got := d.awaitAck("job", acks); !errors.Is(got, tt.want) {
+			if got := d.awaitAck("job", acks, time.Second); !errors.Is(got, tt.want) {
 				t.Errorf("awaitAck = %v, want %v", got, tt.want)
 			}
 
@@ -111,5 +112,17 @@ func TestAwaitAckMapsTheAnswer(t *testing.T) {
 				t.Error("printer still claimed after the ack")
 			}
 		})
+	}
+}
+
+// A photo's bytes take real time on the wire; the wait must grow with them.
+func TestAckTimeoutScalesWithPayload(t *testing.T) {
+	if got := ackTimeout(0); got != 7*time.Second {
+		t.Errorf("ackTimeout(0) = %v, want 7s", got)
+	}
+
+	// 18 KB at 9600 baud is about 19 seconds.
+	if got := ackTimeout(18_000); got < 25*time.Second || got > 27*time.Second {
+		t.Errorf("ackTimeout(18000) = %v, want about 26s", got)
 	}
 }

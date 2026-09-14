@@ -17,20 +17,15 @@ import (
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
-// Rendering is quick. Printing blocks until the firmware answers, so its
-// timeout must exceed the dispatcher's ackTimeout: a request cut off early
-// reads as a dead dispatcher when the truth was a slow printer.
-const (
-	renderTimeout = 5 * time.Second
-	printTimeout  = 10 * time.Second
-)
+// Rendering is quick, so its client has a flat timeout. Printing waits on
+// the wire and gets a per-request deadline instead (see printTimeout).
+const renderTimeout = 5 * time.Second
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	rendererURL := flag.String("renderer", "http://localhost:8081", "renderer service base URL")
 	dispatcherURL := flag.String("dispatcher", "http://localhost:8082", "dispatcher service base URL")
-	// 9 rows of 32 columns plus the 8 newlines between them: one full page.
-	maxRunes := flag.Int("max-runes", 296, "longest document accepted; must match the renderer")
+	photosDir := flag.String("photos-dir", "", "keep a copy of every printed photo here; empty keeps none")
 	logFormat := flag.String("log-format", "json", "log format: json or text")
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
 	flag.Parse()
@@ -41,12 +36,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// A client each, because the timeouts differ. Both still pool their own
-	// connections, and the link between containers is never the slow part.
+	if *photosDir != "" {
+		if err := os.MkdirAll(*photosDir, 0o755); err != nil {
+			log.Error("cannot create photos dir", "path", *photosDir, "err", err)
+			os.Exit(1)
+		}
+	}
+
+	// A client each, because the timeouts differ. The dispatcher's has none
+	// of its own: every print carries a deadline sized to its payload.
 	a := &api{
 		renderer:   NewRendererClient(*rendererURL, &http.Client{Timeout: renderTimeout}),
-		dispatcher: NewDispatcherClient(*dispatcherURL, &http.Client{Timeout: printTimeout}),
-		limits:     doc.Limits{MaxRunes: *maxRunes},
+		dispatcher: NewDispatcherClient(*dispatcherURL, &http.Client{}),
+		limits:     doc.Paper,
+		photos:     *photosDir,
 		log:        log,
 	}
 
@@ -57,9 +60,9 @@ func main() {
 		// Without these one slow client holds a connection open forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Must exceed renderTimeout plus printTimeout, the longest a print
-		// request can legitimately take.
-		WriteTimeout: 20 * time.Second,
+		// Must exceed the longest print: a square photo is about 30 seconds
+		// of wire plus the dispatcher's margin (see printTimeout).
+		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
