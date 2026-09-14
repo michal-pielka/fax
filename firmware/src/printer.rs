@@ -1,9 +1,9 @@
 //! The thermal printer's protocol: what to send, and how to read what it
 //! says back. The server renders the ESC/POS, so the only commands here are
-//! the two status queries. How the bytes reach the printer is a `Transport`,
-//! of which there is one today (uart.rs) and one to come (USB host on the
-//! ESP32-S3, where the printer's own USB port takes a photo in under a second
-//! instead of twenty).
+//! the two status queries. How the bytes reach the printer is a `Transport`:
+//! today USB (usb.rs), the ESP32-S3 as host to the printer's own USB port,
+//! which takes a photo in milliseconds. The 9600 baud serial header that
+//! came before took twenty seconds and stuttered on every light row.
 
 use std::time::{Duration, Instant};
 
@@ -23,7 +23,8 @@ pub trait Transport {
 
     /// How long `bytes` take to reach the printer over this transport. The
     /// status wait after a job allows this on top of a fixed margin, since a
-    /// printer still receiving cannot have answered yet.
+    /// printer still receiving cannot have answered yet. Over USB it is next
+    /// to nothing; it existed for a serial wire.
     fn transfer_time(&self, bytes: usize) -> Duration;
 }
 

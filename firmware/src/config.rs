@@ -38,5 +38,3 @@ pub const ACK_NO_CONFIRM: &[u8] = br#"{"ok":false,"error":"no_confirmation"}"#;
 /// beyond it is refused before a byte is allocated. A square photo is ~19 KB.
 pub const MAX_JOB: usize = 32 * 1024;
 
-/// Printed on the printer's self-test page (hold feed, then power on).
-pub const BAUD_RATE: u32 = 9600;
