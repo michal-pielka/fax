@@ -45,7 +45,10 @@ That is for development on a laptop; never pass `--build` on the VPS.
 
 ## The firmware
 
-Flashed from a machine with the printer's USB cable, never from the VPS:
+Built for the ESP32-S3, which hosts the printer over its USB port; the
+classic ESP32 and the 9600 baud serial header are history (see the `usb-host`
+branch's log for why). Flashed through the board's COM port from a machine
+with the cable, never from the VPS:
 
 ```sh
 cd firmware
