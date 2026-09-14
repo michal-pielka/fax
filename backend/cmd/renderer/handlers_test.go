@@ -62,12 +62,9 @@ func TestRenderPhotoEndpoint(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Thirty rows fit one stored piece: defined once, printed once.
-	if n := bytes.Count(out.Payload, []byte{0x1d, '*', 48}); n != 1 {
-		t.Errorf("store command appears %d times, want 1", n)
-	}
-	if n := bytes.Count(out.Payload, []byte{0x1d, '/', 0}); n != 1 {
-		t.Errorf("print command appears %d times, want 1", n)
+	// One raster command for the whole picture.
+	if n := bytes.Count(out.Payload, []byte{0x1d, 'v', '0'}); n != 1 {
+		t.Errorf("raster command appears %d times, want 1", n)
 	}
 }
 

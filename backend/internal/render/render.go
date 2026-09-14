@@ -113,69 +113,50 @@ func Render(d doc.Document) []byte {
 }
 
 // RenderPhoto returns the bytes for a picture receipt: the same frame as a
-// text one, with the picture where the words would be. The image is
+// text one, with rows of dots where the words would be. The image is
 // PhotoWidth wide -- the caller validated that -- and any pixel darker than
 // mid-grey prints. The browser dithered it; this only packs bits.
 //
-// The picture is not streamed to the head. Over a 9600 baud wire a raster
-// command (GS v 0) arrives at twenty rows a second, and on any row light
-// enough to print faster than that the head stops and waits; a photo came
-// out in stutters from the point it got light. Instead each piece is stored
-// in the printer (GS *), which buffers it as it arrives, and then printed
-// from memory (GS /) at the head's own pace, in one motion. Printer memory
-// holds 6144 bytes -- it says so itself when given more, in print -- which at
-// full width is 128 rows, so a square photo is three pieces with a pause
-// between each while the next one loads.
+// The picture is one raster command, streamed. Over a 9600 baud wire the
+// head prints each row as it arrives and outruns the wire on light rows, so
+// the paper stutters there. That is the wire's speed, not a fault, and the
+// alternatives -- storing pieces in the printer and guessing how long each
+// takes to print -- cost more than they gave. Simple, correct, a little
+// jerky.
 func RenderPhoto(img image.Image) []byte {
 	var buf bytes.Buffer
 
 	buf.Write(reset)
 	writeHeader(&buf)
-
-	b := img.Bounds()
-	for y0 := 0; y0 < b.Dy(); y0 += pieceRows {
-		rows := min(pieceRows, b.Dy()-y0)
-		storeAndPrint(&buf, img, y0, rows)
-	}
-
+	raster(&buf, img)
 	writeFooter(&buf)
 	buf.Write(feed(tailFeed))
 
 	return buf.Bytes()
 }
 
-// pieceRows is the most rows one stored bitmap holds at full width: 6144
-// bytes of bitmap over 48 bytes of width is 128 rows, y = 16 groups of eight.
-// The manual claims twice that; the printer disagreed, in print.
-const pieceRows = 128
-
-// storeAndPrint emits GS * x y d... then GS / 0 for rows [y0, y0+rows) of img.
-// The stored format is columns, not rows: each byte is eight dots down one
-// column, top dot in the high bit, and the bytes run down each column before
-// moving right. Heights are padded to a multiple of eight with white.
-func storeAndPrint(buf *bytes.Buffer, img image.Image, y0, rows int) {
+// raster emits GS v 0 m xL xH yL yH d1..dk: x is bytes per row, y rows, then
+// the rows themselves, eight pixels a byte, leftmost pixel in the high bit,
+// one for black.
+func raster(buf *bytes.Buffer, img image.Image) {
 	b := img.Bounds()
-	w := b.Dx()
-	x := (w + 7) / 8    // bytes of width
-	y := (rows + 7) / 8 // groups of eight rows
-	data := make([]byte, x*8*y)
+	w, h := b.Dx(), b.Dy()
+	perRow := (w + 7) / 8
 
-	for col := 0; col < w; col++ {
-		for g := 0; g < y; g++ {
-			var v byte
-			for bit := 0; bit < 8; bit++ {
-				row := g*8 + bit
-				if row < rows && dark(img.At(b.Min.X+col, b.Min.Y+y0+row)) {
-					v |= 0x80 >> bit
-				}
+	buf.Write([]byte{0x1d, 'v', '0', 0, byte(perRow), byte(perRow >> 8), byte(h), byte(h >> 8)})
+
+	row := make([]byte, perRow)
+	for y := 0; y < h; y++ {
+		clear(row)
+
+		for x := range w {
+			if dark(img.At(b.Min.X+x, b.Min.Y+y)) {
+				row[x/8] |= 0x80 >> (x % 8)
 			}
-			data[col*y+g] = v
 		}
-	}
 
-	buf.Write([]byte{0x1d, '*', byte(x), byte(y)})
-	buf.Write(data)
-	buf.Write([]byte{0x1d, '/', 0}) // normal size
+		buf.Write(row)
+	}
 }
 
 // dark is the one decision made about a pixel. A dithered picture is already
