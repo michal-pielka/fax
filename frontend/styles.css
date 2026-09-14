@@ -163,6 +163,20 @@
     pointer-events: none;
   }
 
+  /* With a photo the body is the photo: as tall as the picture at the paper's
+     width, the writing hidden beneath it and given back on remove. */
+  .body.has-photo { height: auto; }
+  .body.has-photo textarea, .body.has-photo .mirror { visibility: hidden; }
+
+  .photo {
+    display: none;
+    width: 100%;
+    height: auto;
+    image-rendering: pixelated;
+  }
+
+  .body.has-photo .photo { display: block; }
+
   .body textarea {
     display: block;
     background: transparent;
@@ -197,7 +211,7 @@
 
   /* One character revealed at a time by stepping the width, because
      `content` is not reliably animatable. Only while the placeholder shows. */
-  .body:has(> textarea:placeholder-shown)::after {
+  .body:not(.has-photo):has(> textarea:placeholder-shown)::after {
     content: '...';
     position: absolute;
     top: 0;
@@ -236,6 +250,9 @@
      or a tap on the empty space would press an invisible key. */
   .keys {
     display: flex;
+    /* Centred within its box, not sized to its content: with the style keys
+       hidden the row is still as wide as the paper, and would sit left. */
+    justify-content: center;
     gap: clamp(20px, 3.4vw, 40px);
     font-size: clamp(15px, 2.05vw, 22px);
     letter-spacing: 0.1em;
@@ -246,6 +263,7 @@
 
   .stack:focus-within .keys,
   .stack:hover .keys,
+  .keys.photo,
   .keys:has([aria-pressed="true"]) {
     opacity: 1;
     visibility: visible;
@@ -273,6 +291,11 @@
   .keys button[aria-pressed="true"] { color: var(--ink); }
   .keys button[aria-pressed="true"]::before { content: "\25CF"; }  /* filled */
   .keys button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+
+  /* With a photo on the paper the style keys have nothing to style; the one
+     key left is the way back to words. */
+  .keys.photo .style { display: none; }
+  .keys:not(.photo) .remove { display: none; }
 
   /* The labels show what they do: the underline drawn on the letter, reverse
      as a letter in a filled cell. The cell takes the key's own colour. */
@@ -303,6 +326,10 @@
   .slide { cursor: grab; }
   .slide.dragging { cursor: grabbing; }
   .slide .body { cursor: text; }
+  /* A picture is not text to select, so a finger on it pulls the paper. */
+  .slide .body.has-photo { cursor: grab; touch-action: none; }
+  /* A file held over the paper. */
+  .slide.over .paper { outline: 2px dashed var(--ink-dim); outline-offset: -8px; }
 
   /* Where a finger pulls the paper rather than panning the page. Not the
      writing area, which stays the browser's. */

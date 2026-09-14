@@ -30,6 +30,9 @@
       <pre class="mirror" id="mirror" aria-hidden="true"></pre>
       <textarea id="text" spellcheck="false" autocorrect="off" autocapitalize="off"
                 autocomplete="off" aria-label="Your message" placeholder="start typing"></textarea>
+      <!-- A picture instead of words: the dithered dots, one per printer dot,
+           shown pixelated so what is on screen is what comes out. -->
+      <canvas class="photo" id="photo" width="384" height="1" aria-label="Your photo"></canvas>
     </div>
 
     <div class="divider" id="divBot"></div>
@@ -45,6 +48,9 @@
        styles it; with a bare caret it sets what typing produces, and stays
        lit until pressed again. Shown while the paper is being written on. -->
   <div class="keys" id="keys" role="toolbar" aria-label="Formatting"></div>
+
+  <!-- The picker behind the PHOTO key. On a phone it offers the camera. -->
+  <input type="file" id="file" accept="image/*" hidden>
 
   <!-- Printing is sliding the receipt off the top of the window. This is
        the same job for keyboards and screen readers, and is not drawn. -->
@@ -70,7 +76,7 @@
     <div class="divider about-divider"></div>
     <div class="zone prose">
       <p>A receipt printer in my home. Write me something, anything, and it prints there, on real paper.</p>
-      <p>Type, style it with the keys, slide it off the top of the screen.</p>
+      <p>Type, or add a photo with the keys, and slide it off the top of the screen.</p>
       <p>Nine short lines and nothing fancier than a letter. One receipt at a time.</p>
 	  <p>I read every one</p>
 	  <p>That is the entire feature set.</p>

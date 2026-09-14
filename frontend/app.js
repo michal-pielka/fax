@@ -4,6 +4,7 @@
   const COLS = cssInt('--cols'), ROWS = cssInt('--rows');
   const $ = (id) => document.getElementById(id);
   const ta = $('text'), mirror = $('mirror'), roll = $('roll'), keys = $('keys'), status = $('status');
+  const body = $('body'), canvas = $('photo'), file = $('file');
 
   $('divTop').textContent = '-'.repeat(COLS);
   $('divBot').textContent = '-'.repeat(COLS);
@@ -204,7 +205,7 @@
   TOOLS.forEach(t => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.title = t.title; b.dataset.key = t.key; b.className = t.key;
+    b.title = t.title; b.dataset.key = t.key; b.className = t.key + ' style';
     b.setAttribute('aria-pressed', 'false');
     /* The label sits in its own element so the reverse key can draw a
        filled cell around its letter. */
@@ -222,11 +223,26 @@
     keys.append(b);
   });
 
+  /* Two more keys, not styles: one puts a picture on the paper, the other
+     takes it off again. Same look, same no-focus rule. */
+  const key = (cls, label, title, onClick) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = cls; b.title = title;
+    b.append(Object.assign(document.createElement('span'), { textContent: label }));
+    b.addEventListener('pointerdown', e => e.preventDefault());
+    b.addEventListener('mousedown', e => e.preventDefault());
+    b.addEventListener('click', onClick);
+    keys.append(b);
+  };
+
+  key('pick', 'PHOTO', 'Print a photo instead', () => file.click());
+  key('remove', 'REMOVE', 'Back to words', () => setPhoto(null));
+
   /* Pressed means: with a selection, every selected character has it; with a
      bare caret, it is part of the typing mode. */
   function syncKeys() {
     const a = ta.selectionStart, b = ta.selectionEnd;
-    keys.querySelectorAll('button').forEach(btn => {
+    keys.querySelectorAll('button.style').forEach(btn => {
       const t = TOOLS.find(x => x.key === btn.dataset.key);
       let on;
       if (a === b) on = !!(mode & t.bit);
@@ -266,6 +282,12 @@
      rather than refuse it, which on a phone silently ate most pastes. */
   ta.addEventListener('paste', (e) => {
     e.preventDefault();
+
+    /* A picture on the clipboard -- copied from Photos, a screenshot -- is
+       the quietest way to send one. */
+    const pic = imageIn(e.clipboardData);
+    if (pic) { loadPhoto(pic); return; }
+
     const text = (e.clipboardData || window.clipboardData)?.getData('text/plain') || '';
     if (!text) return;
 
@@ -337,7 +359,204 @@
 
   /* The only instruction on the page, and only once there is something to
      print. Replaced by whatever happens next. */
-  const hint = () => (ta.value.trim() ? 'slide the receipt up to print' : '');
+  const hint = () => (photo || ta.value.trim() ? 'slide the receipt up to print' : '');
+
+  /* ---- a photo instead of words ---------------------------------------- */
+
+  /* The printer's picture: PHOTO_W dots wide, at most PHOTO_H tall, one bit a
+     dot. The server checks exactly these two numbers. */
+  const PHOTO_W = 384, PHOTO_H = 384;
+
+  /* The picture on the paper, or null: its packed rows and its height. The
+     receipt is either words or this, never both. */
+  let photo = null;
+
+  function imageIn(dt) {
+    if (!dt) return null;
+    const f = [...(dt.files || [])].find(f => f.type.startsWith('image/'));
+    if (f) return f;
+    const it = [...(dt.items || [])].find(i => i.type.startsWith('image/'));
+    return it ? it.getAsFile() : null;
+  }
+
+  /* Read a picture, fit it to the paper, and turn it into dots. Everything
+     that decides how the photo looks happens here, on the sender's device,
+     and the dots shown are the dots sent. */
+  async function loadPhoto(blob) {
+    if (!blob || !blob.type.startsWith('image/')) { setStatus('that is not a picture', true); return; }
+
+    let bmp;
+    try {
+      bmp = await decode(blob);
+    } catch {
+      setStatus('could not read that picture', true);
+      return;
+    }
+
+    /* Width to the paper, height to match; a tall picture is cropped to a
+       square about its middle rather than shrunk to a strip. */
+    const scale = PHOTO_W / bmp.width;
+    let h = Math.round(bmp.height * scale), sy = 0, sh = bmp.height;
+    if (h > PHOTO_H) { sh = PHOTO_H / scale; sy = (bmp.height - sh) / 2; h = PHOTO_H; }
+    h = Math.max(1, h);
+
+    const work = document.createElement('canvas');
+    work.width = PHOTO_W; work.height = h;
+    const ctx = work.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, sy, bmp.width, sh, 0, 0, PHOTO_W, h);
+    if (bmp.close) bmp.close();
+
+    const bits = dither(ctx.getImageData(0, 0, PHOTO_W, h).data, PHOTO_W, h);
+    setPhoto({ bits, h });
+  }
+
+  /* createImageBitmap honours the camera's orientation tag and is fast;
+     an <img> is the fallback where it is missing. */
+  function decode(blob) {
+    if (window.createImageBitmap) return createImageBitmap(blob);
+    return new Promise((ok, bad) => {
+      const url = URL.createObjectURL(blob), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); ok(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); bad(new Error('decode')); };
+      img.src = url;
+    });
+  }
+
+  /* Luminance, levels, then Floyd-Steinberg. Levels stretch the picture so
+     its darkest percent is black and its lightest white: a phone photo of a
+     room is otherwise a grey smear at one bit. Returns packed rows, eight
+     dots a byte, leftmost in the high bit, 1 for white as PNG has it. */
+  function dither(rgba, w, h) {
+    const n = w * h, lum = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+      lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < n; i++) hist[lum[i] | 0]++;
+    let lo = 0, hi = 255, acc = 0;
+    for (; lo < 255 && acc + hist[lo] < n * 0.01; lo++) acc += hist[lo];
+    acc = 0;
+    for (; hi > lo && acc + hist[hi] < n * 0.01; hi--) acc += hist[hi];
+    const span = Math.max(1, hi - lo);
+
+    const stride = (w + 7) >> 3, bits = new Uint8Array(stride * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const old = Math.min(255, Math.max(0, (lum[i] - lo) * 255 / span));
+        const white = old >= 128;
+        if (white) bits[y * stride + (x >> 3)] |= 0x80 >> (x & 7);
+        const err = old - (white ? 255 : 0);
+        if (x + 1 < w) lum[i + 1] += err * 7 / 16;
+        if (y + 1 < h) {
+          if (x > 0) lum[i + w - 1] += err * 3 / 16;
+          lum[i + w] += err * 5 / 16;
+          if (x + 1 < w) lum[i + w + 1] += err * 1 / 16;
+        }
+      }
+    }
+
+    return bits;
+  }
+
+  /* Put a picture on the paper, or take it off. The words stay in the hidden
+     textarea and come back with it. */
+  function setPhoto(p) {
+    photo = p;
+    body.classList.toggle('has-photo', !!p);
+    keys.classList.toggle('photo', !!p);
+
+    if (p) {
+      canvas.height = p.h;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(PHOTO_W, p.h), stride = (PHOTO_W + 7) >> 3;
+      for (let y = 0; y < p.h; y++) {
+        for (let x = 0; x < PHOTO_W; x++) {
+          const v = p.bits[y * stride + (x >> 3)] & (0x80 >> (x & 7)) ? 255 : 0;
+          const o = (y * PHOTO_W + x) * 4;
+          img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+          img.data[o + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      ta.blur();
+    } else {
+      ta.focus();
+    }
+
+    setStatus(hint());
+  }
+
+  /* The picture as the server wants it: a one-bit greyscale PNG, written by
+     hand. The dots have no redundancy to compress, so the deflate stream is
+     stored blocks, which keeps this to a few dozen lines and no library. */
+  function encodePNG(bits, w, h) {
+    const stride = (w + 7) >> 3;
+    const raw = new Uint8Array((stride + 1) * h);
+    for (let y = 0; y < h; y++) raw.set(bits.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1);
+
+    /* zlib: header, stored blocks of up to 65535 bytes, adler32. */
+    const blocks = Math.max(1, Math.ceil(raw.length / 65535));
+    const z = new Uint8Array(2 + raw.length + blocks * 5 + 4);
+    let o = 0;
+    z[o++] = 0x78; z[o++] = 0x01;
+    for (let i = 0; i < blocks; i++) {
+      const start = i * 65535, len = Math.min(65535, raw.length - start);
+      z[o++] = i === blocks - 1 ? 1 : 0;
+      z[o++] = len & 255; z[o++] = len >> 8; z[o++] = ~len & 255; z[o++] = (~len >> 8) & 255;
+      z.set(raw.subarray(start, start + len), o); o += len;
+    }
+    let a = 1, b = 0;
+    for (let i = 0; i < raw.length; i++) { a = (a + raw[i]) % 65521; b = (b + a) % 65521; }
+    z[o++] = b >> 8; z[o++] = b & 255; z[o++] = a >> 8; z[o++] = a & 255;
+
+    const be32 = (v) => [v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255];
+    const chunk = (type, data) => {
+      const t = [...type].map(c => c.charCodeAt(0));
+      const body = new Uint8Array([...t, ...data]);
+      return [...be32(data.length), ...body, ...be32(crc32(body))];
+    };
+    const ihdr = [...be32(w), ...be32(h), 1, 0, 0, 0, 0]; // depth 1, greyscale
+
+    return new Blob([new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ...chunk('IHDR', ihdr), ...chunk('IDAT', z), ...chunk('IEND', []),
+    ])], { type: 'image/png' });
+  }
+
+  const crcTable = new Int32Array(256).map((_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c;
+  });
+
+  function crc32(bytes) {
+    let c = -1;
+    for (let i = 0; i < bytes.length; i++) c = crcTable[(c ^ bytes[i]) & 255] ^ (c >>> 8);
+    return (c ^ -1) >>> 0;
+  }
+
+  file.addEventListener('change', () => { if (file.files[0]) loadPhoto(file.files[0]); file.value = ''; });
+
+  /* Dropped on the paper, from a desktop. */
+  roll.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); roll.classList.add('over'); } });
+  roll.addEventListener('dragleave', () => roll.classList.remove('over'));
+  roll.addEventListener('drop', (e) => {
+    roll.classList.remove('over');
+    const pic = imageIn(e.dataTransfer);
+    if (!pic) return;
+    e.preventDefault();
+    loadPhoto(pic);
+  });
+
+  /* Pasted anywhere on the page, not only into the words. */
+  document.addEventListener('paste', (e) => {
+    if (document.activeElement === ta) return;
+    const pic = imageIn(e.clipboardData);
+    if (pic) { e.preventDefault(); loadPhoto(pic); }
+  });
 
   /* There is no button. The receipt is picked up by its frame -- anything but
      the writing area -- and pulled up. Past a line near the top of the window
@@ -393,7 +612,7 @@
   let drag = null;
 
   roll.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || e.target.closest('.body') || e.target.closest('.keys')) return;
+    if (e.button !== 0 || (e.target.closest('.body') && !photo) || e.target.closest('.keys')) return;
     if (phase === 'fly' || phase === 'gone' || phase === 'arrive') return;
 
     /* No default: the press must not start a text selection, and must not
@@ -455,13 +674,18 @@
      together; whichever finishes last decides when the next sheet arrives,
      so the paper is never swapped in front of someone's eyes. */
   async function submit() {
-    const doc = document_();
-    if (!doc.text.trim()) {
+    const doc = photo ? null : document_();
+    if (!photo && !doc.text.trim()) {
       setStatus('nothing to print', true);
       phase = 'settle';
       schedule();
       return;
     }
+
+    /* The same door for both: the content type says which. */
+    const request = photo
+      ? { headers: { 'Content-Type': 'image/png' }, body: encodePNG(photo.bits, PHOTO_W, photo.h) }
+      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) };
 
     phase = 'fly';
     v = Math.min(v, -1400);
@@ -472,11 +696,7 @@
     let ok = false, message = '';
 
     try {
-      const res = await fetch('/api/print', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(doc),
-      });
+      const res = await fetch('/api/print', { method: 'POST', ...request });
 
       if (res.ok) ok = true;
       else {
@@ -522,6 +742,7 @@
     remember();
     render();
     syncKeys();
+    if (photo) setPhoto(null);
   }
 
   /* For keyboards and screen readers: the same job, without the gesture. */
