@@ -35,6 +35,11 @@ pub const ACK_OK: &[u8] = br#"{"ok":true}"#;
 pub const ACK_NO_PAPER: &[u8] = br#"{"ok":false,"error":"no_paper"}"#;
 pub const ACK_NO_CONFIRM: &[u8] = br#"{"ok":false,"error":"no_confirmation"}"#;
 
+/// The largest job we will assemble, in bytes. Matches the broker's
+/// max_packet_size: anything the broker lets through fits, and a claimed size
+/// beyond it is refused before a byte is allocated. A square photo is ~19 KB.
+pub const MAX_JOB: usize = 32 * 1024;
+
 /// Printed on the printer's self-test page (hold feed, then power on).
 pub const BAUD_RATE: u32 = 9600;
 

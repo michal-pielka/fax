@@ -4,7 +4,7 @@
 use std::sync::mpsc::{self, Receiver};
 
 use esp_idf_svc::mqtt::client::{
-    EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
+    Details, EspMqttClient, EventPayload, LwtConfiguration, MqttClientConfiguration, QoS,
 };
 use esp_idf_svc::sys::{esp_crt_bundle_attach, EspError};
 
@@ -50,6 +50,12 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
     // faster grows heap forever on a board with 300 KB of it.
     let (tx, rx) = mpsc::sync_channel(4);
 
+    // ESP-IDF hands a message over in pieces of its receive buffer, about a
+    // kilobyte each. A text receipt is one piece; a photo is twenty. This is
+    // the one being put back together, if any. It lives in the callback,
+    // which is the only place that sees the pieces.
+    let mut partial: Option<Partial> = None;
+
     let client = EspMqttClient::new_cb(config::MQTT_URL, &options, move |event| {
         match event.payload() {
             // try_send, never send: send blocks when full, which blocks the
@@ -60,24 +66,63 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
                 }
             }
 
-            // One topic subscribed, so this is a job. No chunk reassembly:
-            // raise the ~300-character cap past ~3500 and receipts will split.
-            EventPayload::Received { topic, data, .. } => {
-                // No topic means a continuation chunk, which cannot happen
-                // at our sizes. Say so and drop it rather than reassemble.
-                let Some(id) = topic.and_then(|t| t.rsplit('/').next()) else {
-                    log::warn!("job with no topic, dropped");
-                    return;
+            // One topic subscribed, so this is a job, or a piece of one. Only
+            // the first piece carries the topic; the rest carry an offset.
+            EventPayload::Received { topic, data, details, .. } => {
+                let payload = match details {
+                    Details::Complete => {
+                        let Some(id) = topic.and_then(|t| t.rsplit('/').next()) else {
+                            log::warn!("job with no topic, dropped");
+                            return;
+                        };
+                        partial = None;
+                        Some((id.to_string(), data.to_vec()))
+                    }
+
+                    Details::InitialChunk(first) => {
+                        let Some(id) = topic.and_then(|t| t.rsplit('/').next()) else {
+                            log::warn!("job with no topic, dropped");
+                            return;
+                        };
+                        // Refused before allocating: the claimed size is the
+                        // sender's word, and the heap is 300 KB.
+                        if first.total_data_size > config::MAX_JOB {
+                            log::warn!("job {id} is {} bytes, over the limit, dropped", first.total_data_size);
+                            partial = None;
+                            return;
+                        }
+                        let mut buf = Vec::with_capacity(first.total_data_size);
+                        buf.extend_from_slice(data);
+                        partial = Some(Partial { id: id.to_string(), buf, total: first.total_data_size });
+                        None
+                    }
+
+                    Details::SubsequentChunk(next) => {
+                        let Some(p) = partial.as_mut() else {
+                            log::warn!("a piece of a job we never started, dropped");
+                            return;
+                        };
+                        // Pieces arrive in order and back to back. Anything
+                        // else means one went missing, and a receipt with a
+                        // hole in it is worse than none.
+                        if next.current_data_offset != p.buf.len() || next.total_data_size != p.total {
+                            log::warn!("job {} arrived out of order, dropped", p.id);
+                            partial = None;
+                            return;
+                        }
+                        p.buf.extend_from_slice(data);
+                        if p.buf.len() < p.total {
+                            return;
+                        }
+                        partial.take().map(|p| (p.id, p.buf))
+                    }
                 };
+
+                let Some((id, payload)) = payload else { return };
 
                 // No queue in this design: shed work rather than exhaust the
                 // heap and reboot mid-receipt.
-                let job = Event::Job {
-                    id: id.to_string(),
-                    payload: data.to_vec(),
-                };
-
-                if tx.try_send(job).is_err() {
+                if tx.try_send(Event::Job { id: id.clone(), payload }).is_err() {
                     log::warn!("channel full, dropped job {id}");
                 }
             }
@@ -91,4 +136,11 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
     })?;
 
     Ok((client, rx))
+}
+
+/// A job still arriving: what we have of it, and how much there will be.
+struct Partial {
+    id: String,
+    buf: Vec<u8>,
+    total: usize,
 }
