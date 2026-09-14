@@ -321,11 +321,4 @@ impl Transport for Usb {
         Ok(())
     }
 
-    /// The transfer itself is milliseconds. What the status wait must allow
-    /// for is the printing: the printer parses a raster as it prints it, so
-    /// its answer to a query behind a photo comes when the photo is nearly
-    /// out, and a row takes up to 50 ms -- about a millisecond per byte.
-    fn transfer_time(&self, bytes: usize) -> Duration {
-        Duration::from_micros(bytes as u64 * 1100)
-    }
 }

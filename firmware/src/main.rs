@@ -77,23 +77,20 @@ fn main() -> Result<(), EspError> {
 
                 log::info!("printing {} bytes for {id}", payload.len());
 
-                // A printer that is unplugged, off, or not taking bytes is a
-                // job that did not print, not a reason for the board to die.
-                let started = std::time::Instant::now();
-                if let Err(e) = printer.write(&payload) {
-                    log::warn!("could not write {id}: {e}");
-                    ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
-                    continue;
-                }
-                log::info!("printer took {} bytes in {} ms", payload.len(), started.elapsed().as_millis());
-
-                if printer.wait_done(payload.len()) {
-                    log::info!("printed {id}");
-                    ack(&mut client, &id, config::ACK_OK)?;
-                } else {
-                    // It may well have printed; we cannot say so.
-                    log::warn!("no confirmation for {id}");
-                    ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
+                // Over USB the write returns only once the printer has taken
+                // every byte, which -- since it prints as its buffer drains --
+                // means the job is on paper. So a completed write is the
+                // confirmation; an error is a job that never reached paper:
+                // the printer off, unplugged, or stalled.
+                match printer.write(&payload) {
+                    Ok(()) => {
+                        log::info!("printed {id}");
+                        ack(&mut client, &id, config::ACK_OK)?;
+                    }
+                    Err(e) => {
+                        log::warn!("could not print {id}: {e}");
+                        ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
+                    }
                 }
             }
         }

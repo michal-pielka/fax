@@ -5,14 +5,17 @@
 //! which takes a photo in milliseconds. The 9600 baud serial header that
 //! came before took twenty seconds and stuttered on every light row.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use esp_idf_svc::sys::EspError;
 
 /// A way of moving bytes to the printer and back. Implementations block:
 /// `write` returns once the printer has the bytes, not once a buffer has them.
 pub trait Transport {
-    /// Send a whole job, blocking until it has left this side.
+    /// Send a whole job, blocking until the printer has taken every byte.
+    /// Over USB the printer holds the bytes back with flow control while it
+    /// prints, so this returns only once the job is on paper: the return is
+    /// itself the confirmation, and there is no separate "done" to wait for.
     fn write(&self, data: &[u8]) -> Result<(), EspError>;
 
     /// One byte from the printer, or `None` if none arrived within `timeout`.
@@ -20,12 +23,6 @@ pub trait Transport {
 
     /// Drop whatever the printer has sent and nobody has read.
     fn discard_input(&self) -> Result<(), EspError>;
-
-    /// How long after a job of `bytes` is sent the printer may still be too
-    /// busy with it to answer a status query: the time on the wire, and the
-    /// printing the printer does before it reads on. The status wait allows
-    /// this on top of a fixed margin.
-    fn transfer_time(&self, bytes: usize) -> Duration;
 }
 
 /// The printer, over some transport.
@@ -33,17 +30,13 @@ pub struct Printer<T: Transport> {
     link: T,
 }
 
-/// The fixed part of the wait for a status byte: how long a printer that has
-/// the whole job may still take to answer. The dispatcher's ackTimeout allows
-/// this plus two seconds, so a printer that gives up gets to say why.
-const STATUS_WAIT: Duration = Duration::from_secs(5);
-
 impl<T: Transport> Printer<T> {
     pub fn new(link: T) -> Self {
         Self { link }
     }
 
-    /// Write a rendered job and block until the printer has it.
+    /// Write a rendered job and block until it is printed. The error is a job
+    /// that did not reach paper: the printer off, unplugged, or stalled.
     pub fn write(&self, data: &[u8]) -> Result<(), EspError> {
         self.link.write(data)
     }
@@ -69,42 +62,5 @@ impl<T: Transport> Printer<T> {
         // Bits 5 and 6 are the paper-end sensor: 00 present, 11 gone.
         // Measured on this printer as 0x12 with the roll in, 0x72 with it out.
         Some(status & 0b0110_0000 == 0)
-    }
-
-    /// Wait for the printer to answer for a job of `job_bytes` just written.
-    /// `false` means it never did: jammed, unplugged, or silent. The answer
-    /// comes once the printer has parsed everything before the query:
-    /// milliseconds after text, and after most of a photo has printed.
-    ///
-    /// The reply is one byte, but a stray byte can arrive first; anything
-    /// that is not a status byte is read past rather than taken as a refusal.
-    pub fn wait_done(&self, job_bytes: usize) -> bool {
-        if self.link.write(&[0x1D, 0x72, 0x01]).is_err() {
-            return false;
-        }
-
-        let deadline = Instant::now() + STATUS_WAIT + self.link.transfer_time(job_bytes);
-
-        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-            // An empty read is "nothing yet", not "never": over USB the
-            // printer hands back empty packets while it is still busy.
-            let status = match self.link.read_byte(left) {
-                Ok(Some(b)) => b,
-                Ok(None) => continue,
-                Err(_) => return false,
-            };
-
-            // GS r has no fixed bits, so this is weak: only the low nibble is
-            // defined, and this printer answers 0x00 with paper and 0x0c
-            // without.
-            if status & 0b1111_0000 != 0 {
-                log::warn!("printer said {status:#04x} while we waited for a status; still waiting");
-                continue;
-            }
-
-            return true;
-        }
-
-        false
     }
 }
