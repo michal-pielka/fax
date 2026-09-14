@@ -1,0 +1,61 @@
+# Bake the three service images on every push to main and put them in the
+# GitHub Container Registry. The VPS never compiles anything: it pulls these.
+#
+#   ghcr.io/michal-pielka/fax-gateway
+#   ghcr.io/michal-pielka/fax-renderer
+#   ghcr.io/michal-pielka/fax-dispatcher
+#
+# each tagged `latest` and with the commit that built it, so a bad deploy
+# can be rolled back by name (see deploy/update.sh).
+name: images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [gateway, renderer, dispatcher]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The token Actions already has may push packages to this repository's
+      # owner; no secret to create or rotate.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Registry names are lowercase; the owner's login may not be.
+      - id: owner
+        run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      # The Go module cache and compiled layers persist between runs, so a
+      # build that changes one file takes about a minute, not the twenty the
+      # VPS needed from scratch.
+      - uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/cmd/${{ matrix.service }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/fax-${{ matrix.service }}:latest
+            ghcr.io/${{ steps.owner.outputs.name }}/fax-${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

@@ -26,6 +26,11 @@ services:
     depends_on: [gateway]
 
   gateway:
+    # Pulled from the registry, where GitHub Actions put it (see
+    # .github/workflows/images.yml). FAX_TAG pins a commit; unset is latest.
+    # `build:` stays for development: `docker compose up --build` compiles
+    # here instead. The VPS never passes --build.
+    image: ghcr.io/michal-pielka/fax-gateway:${FAX_TAG:-latest}
     build:
       context: ./backend
       dockerfile: cmd/gateway/Dockerfile
@@ -46,6 +51,11 @@ services:
     depends_on: [renderer, dispatcher]
 
   renderer:
+    # Pulled from the registry, where GitHub Actions put it (see
+    # .github/workflows/images.yml). FAX_TAG pins a commit; unset is latest.
+    # `build:` stays for development: `docker compose up --build` compiles
+    # here instead. The VPS never passes --build.
+    image: ghcr.io/michal-pielka/fax-renderer:${FAX_TAG:-latest}
     build:
       context: ./backend
       dockerfile: cmd/renderer/Dockerfile
@@ -55,6 +65,11 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   dispatcher:
+    # Pulled from the registry, where GitHub Actions put it (see
+    # .github/workflows/images.yml). FAX_TAG pins a commit; unset is latest.
+    # `build:` stays for development: `docker compose up --build` compiles
+    # here instead. The VPS never passes --build.
+    image: ghcr.io/michal-pielka/fax-dispatcher:${FAX_TAG:-latest}
     build:
       context: ./backend
       dockerfile: cmd/dispatcher/Dockerfile
