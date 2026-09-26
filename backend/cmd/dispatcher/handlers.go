@@ -51,8 +51,8 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ID == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "missing id")
+	if !validID(req.ID) {
+		httpx.WriteError(w, http.StatusBadRequest, "missing or invalid id")
 		return
 	}
 
@@ -91,6 +91,23 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 		a.log.ErrorContext(r.Context(), "publish failed", "err", err)
 		httpx.WriteError(w, http.StatusServiceUnavailable, "cannot reach the broker")
 	}
+}
+
+// validID admits what the gateway mints (a UUID) and nothing that could change
+// the meaning of the topic it is appended to: no '/', '+' or '#', and short
+// enough to fit the firmware's receive buffer alongside the prefix.
+func validID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+
+	for _, c := range id {
+		if !(c == '-' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (a *api) state(w http.ResponseWriter, _ *http.Request) {

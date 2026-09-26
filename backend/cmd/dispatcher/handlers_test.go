@@ -114,6 +114,11 @@ func TestPrintRejectsBadRequests(t *testing.T) {
 		"missing id":     `{"payload":"AA=="}`,
 		"empty payload":  `{"id":"a","payload":""}`,
 		"no payload":     `{"id":"a"}`,
+		"slash in id":    `{"id":"a/b","payload":"AA=="}`,
+		"wildcard id":    `{"id":"#","payload":"AA=="}`,
+		"plus in id":     `{"id":"a+","payload":"AA=="}`,
+		"traversal id":   `{"id":"../x","payload":"AA=="}`,
+		"long id":        `{"id":"` + strings.Repeat("a", 65) + `","payload":"AA=="}`,
 	}
 
 	for name, body := range tests {
