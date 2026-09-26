@@ -1,42 +1,59 @@
-name: Continuous Integration
+# Check the firmware compiles, is formatted and is clippy-clean. Nothing is
+# flashed from here: that needs the board and the real credentials.
+name: firmware
 
 on:
   push:
-    branches:
-      - main
-    paths-ignore:
-      - "**/README.md"
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
   pull_request:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # config.rs reads these with env!, so a build without them does not compile.
+  # Placeholders: this binary is never flashed.
+  WIFI_SSID: ci
+  WIFI_PASS: ci
+  MQTT_PASS: ci
+
+defaults:
+  run:
+    working-directory: firmware
 
 jobs:
-  rust-checks:
-    name: Rust Checks
+  check:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        action:
-          - command: build
-            args: --release
-          - command: fmt
-            args: --all -- --check --color always
-          - command: clippy
-            args: --all-targets --all-features --workspace -- -D warnings
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Setup Rust
-        uses: esp-rs/xtensa-toolchain@v1.6
+      - uses: actions/checkout@v4
+
+      - uses: esp-rs/xtensa-toolchain@v1.7
         with:
           default: true
-          buildtargets: esp32
+          buildtargets: esp32s3
           ldproxy: true
-      - name: Enable caching
-        uses: Swatinem/rust-cache@v2
-      - name: Run command
-        run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
+
+      # ESP-IDF itself: downloaded into firmware/.embuild on first build (see
+      # ESP_IDF_TOOLS_INSTALL_DIR in .cargo/config.toml), and slow to fetch.
+      - uses: actions/cache@v4
+        with:
+          path: firmware/.embuild
+          key: esp-idf-${{ hashFiles('firmware/.cargo/config.toml', 'firmware/Cargo.lock') }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: firmware
+
+      # One job, in order: the ESP-IDF setup is the slow part, so it is paid
+      # once rather than per check.
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features --workspace -- -D warnings
+      - run: cargo build --release
