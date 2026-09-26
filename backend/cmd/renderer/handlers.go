@@ -2,10 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
 	"image/png"
-	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -61,24 +58,9 @@ func (a *api) render(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) renderText(w http.ResponseWriter, r *http.Request) {
-	var d doc.Document
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields() // a typo'd field is a 400, not silent data loss
-
-	if err := dec.Decode(&d); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
-		return
-	}
-
-	if err := d.Validate(a.limits); err != nil {
-		if errors.Is(err, doc.ErrInvalid) {
-			httpx.WriteError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-
-		a.log.ErrorContext(r.Context(), "validator failed", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
-
+	d, err := doc.Decode(r.Body, a.limits)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -97,13 +79,7 @@ func (a *api) renderText(w http.ResponseWriter, r *http.Request) {
 // renderPhoto trusts nothing about the bytes until the header has been read:
 // the size check bounds what the decoder may allocate before it runs.
 func (a *api) renderPhoto(w http.ResponseWriter, r *http.Request) {
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "photo too large or unreadable")
-		return
-	}
-
-	cfg, err := doc.ValidatePhoto(bytes.NewReader(b))
+	b, cfg, err := doc.ReadPhoto(r.Body)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return

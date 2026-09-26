@@ -99,3 +99,23 @@ func TestValidatePhotoReadsOnlyTheHeader(t *testing.T) {
 		t.Fatalf("header alone was not enough: %v", err)
 	}
 }
+
+// Decode is the one entry point for a text receipt, so a caller can treat any
+// error from it as the sender's fault.
+func TestDecodeErrorsAreInvalid(t *testing.T) {
+	for name, body := range map[string]string{
+		"malformed":     `{"text":`,
+		"unknown field": `{"text":"hi","colour":"red"}`,
+		"empty text":    `{"text":"  "}`,
+		"bad span":      `{"text":"hi","spans":[{"start":0,"end":9}]}`,
+	} {
+		if _, err := Decode(strings.NewReader(body), Paper); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+
+	d, err := Decode(strings.NewReader(`{"text":"hi"}`), Paper)
+	if err != nil || d.Text != "hi" {
+		t.Errorf("valid document: %+v, %v", d, err)
+	}
+}

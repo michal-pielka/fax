@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -72,26 +69,11 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) printText(w http.ResponseWriter, r *http.Request) {
-	var d doc.Document
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields() // a typo'd field is a 400, not silent data loss
-
-	if err := dec.Decode(&d); err != nil {
-		a.fail(w, r, http.StatusBadRequest, "malformed JSON: "+err.Error())
-		return
-	}
-
 	// The renderer validates too, but rejecting here saves a round trip and
 	// keeps the public error messages under this service's control.
-	if err := d.Validate(a.limits); err != nil {
-		if errors.Is(err, doc.ErrInvalid) {
-			a.fail(w, r, http.StatusBadRequest, err.Error())
-			return
-		}
-
-		a.log.ErrorContext(r.Context(), "validator failed", "err", err)
-		a.fail(w, r, http.StatusInternalServerError, "internal error")
-
+	d, err := doc.Decode(r.Body, a.limits)
+	if err != nil {
+		a.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -114,13 +96,7 @@ func (a *api) printText(w http.ResponseWriter, r *http.Request) {
 // dithered. Only the header is read here; the renderer decodes the rest once
 // the size is known good.
 func (a *api) printPhoto(w http.ResponseWriter, r *http.Request) {
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		a.fail(w, r, http.StatusBadRequest, "photo too large or unreadable")
-		return
-	}
-
-	cfg, err := doc.ValidatePhoto(bytes.NewReader(b))
+	b, cfg, err := doc.ReadPhoto(r.Body)
 	if err != nil {
 		a.fail(w, r, http.StatusBadRequest, err.Error())
 		return
