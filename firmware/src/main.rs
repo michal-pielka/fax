@@ -8,6 +8,8 @@ mod time;
 mod usb;
 mod wifi;
 
+use std::time::Instant;
+
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::reset::restart;
@@ -97,6 +99,15 @@ fn on_job<T: Transport>(
     id: &str,
     payload: &[u8],
 ) -> Result<(), EspError> {
+    // One clock for the whole job, so a missing or stalled printer costs at
+    // most JOB_DEADLINE however many calls it would otherwise have stalled.
+    let deadline = Instant::now() + config::JOB_DEADLINE;
+
+    if let Err(e) = printer.wait_attached(config::ATTACH_WAIT) {
+        log::warn!("job {id} not printed, no printer: {e}");
+        return ack(client, id, config::ACK_NO_CONFIRM);
+    }
+
     // Measured now, not cached: a browser is waiting on this ack, and a stale
     // answer either refuses a job that would have printed or blasts bytes at
     // an empty slot. Silence is not "no paper" -- see has_paper -- so an
@@ -112,7 +123,7 @@ fn on_job<T: Transport>(
     // which -- since it prints as its buffer drains -- means the job is on
     // paper. So a completed write is the confirmation; an error is a job that
     // never reached paper: the printer off, unplugged, or stalled.
-    match printer.write(payload) {
+    match printer.write(payload, deadline) {
         Ok(()) => {
             log::info!("printed {id}");
             ack(client, id, config::ACK_OK)

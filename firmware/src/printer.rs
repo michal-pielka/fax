@@ -5,18 +5,24 @@
 //! which takes a photo in milliseconds. The 9600 baud serial header that
 //! came before took twenty seconds and stuttered on every light row.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::sys::EspError;
 
 /// A way of moving bytes to the printer and back. Implementations block:
 /// `write` returns once the printer has the bytes, not once a buffer has them.
+/// None of them wait for the printer to appear; that is `wait_attached`, once
+/// per job, so a missing printer costs one wait rather than one per call.
 pub trait Transport {
-    /// Send a whole job, blocking until the printer has taken every byte.
-    /// Over USB the printer holds the bytes back with flow control while it
-    /// prints, so this returns only once the job is on paper: the return is
-    /// itself the confirmation, and there is no separate "done" to wait for.
-    fn write(&self, data: &[u8]) -> Result<(), EspError>;
+    /// Block until the printer is there, for at most `wait`.
+    fn wait_attached(&self, wait: Duration) -> Result<(), EspError>;
+
+    /// Send a whole job, blocking until the printer has taken every byte or
+    /// `deadline` passes. Over USB the printer holds the bytes back with flow
+    /// control while it prints, so this returns only once the job is on
+    /// paper: the return is itself the confirmation, and there is no separate
+    /// "done" to wait for.
+    fn write(&self, data: &[u8], deadline: Instant) -> Result<(), EspError>;
 
     /// One byte from the printer, or `None` if none arrived within `timeout`.
     fn read_byte(&self, timeout: Duration) -> Result<Option<u8>, EspError>;
@@ -35,10 +41,15 @@ impl<T: Transport> Printer<T> {
         Self { link }
     }
 
+    /// Wait up to `wait` for the printer to be plugged in and switched on.
+    pub fn wait_attached(&self, wait: Duration) -> Result<(), EspError> {
+        self.link.wait_attached(wait)
+    }
+
     /// Write a rendered job and block until it is printed. The error is a job
-    /// that did not reach paper: the printer off, unplugged, or stalled.
-    pub fn write(&self, data: &[u8]) -> Result<(), EspError> {
-        self.link.write(data)
+    /// that did not reach paper by `deadline`: unplugged or stalled.
+    pub fn write(&self, data: &[u8], deadline: Instant) -> Result<(), EspError> {
+        self.link.write(data, deadline)
     }
 
     /// Ask whether the printer has paper. `None` is "did not answer", not
@@ -47,7 +58,8 @@ impl<T: Transport> Printer<T> {
     pub fn has_paper(&self) -> Option<bool> {
         // Anything already buffered would be read as this query's reply.
         self.link.discard_input().ok()?;
-        self.link.write(&[0x10, 0x04, 0x04]).ok()?;
+        let deadline = Instant::now() + Duration::from_millis(300);
+        self.link.write(&[0x10, 0x04, 0x04], deadline).ok()?;
 
         let status = self.link.read_byte(Duration::from_millis(300)).ok()??;
 

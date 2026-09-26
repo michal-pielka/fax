@@ -1,6 +1,8 @@
 //! Everything you would change without changing behaviour. Credentials are
 //! baked in via env!, so a missing one is a compile error rather than a bad flash.
 
+use std::time::Duration;
+
 pub const WIFI_SSID: &str = env!("WIFI_SSID");
 pub const WIFI_PASS: &str = env!("WIFI_PASS");
 
@@ -32,6 +34,17 @@ pub const OFFLINE: &[u8] = br#"{"online":false}"#;
 pub const ACK_OK: &[u8] = br#"{"ok":true}"#;
 pub const ACK_NO_PAPER: &[u8] = br#"{"ok":false,"error":"no_paper"}"#;
 pub const ACK_NO_CONFIRM: &[u8] = br#"{"ok":false,"error":"no_confirmation"}"#;
+
+/// How long a job waits for the printer to be attached before giving up on
+/// it: long enough for a printer switched on as the job arrives to enumerate.
+pub const ATTACH_WAIT: Duration = Duration::from_secs(10);
+
+/// The most one job may take, from arrival to ack, attach wait included. A
+/// photo prints in about a second over USB, so this only bites on a printer
+/// that is missing or stalled. Cancelling a transfer caught mid-flight can
+/// add up to two seconds more. backend/internal/timeouts mirrors this, and
+/// waits longer, so a printer that gives up gets to say why.
+pub const JOB_DEADLINE: Duration = Duration::from_secs(20);
 
 /// The largest job we will assemble, in bytes. Matches the broker's
 /// max_packet_size: anything the broker lets through fits, and a claimed size

@@ -5,7 +5,8 @@
 //!
 //! The printer is a USB printer-class device (class 7) with one bulk-out
 //! endpoint for jobs and one bulk-in for its replies. It may be off or
-//! unplugged at boot and come and go afterwards; `write` waits a while for it.
+//! unplugged at boot and come and go afterwards; a job waits a while for it
+//! with `wait_attached`, and every other call fails at once without it.
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
@@ -23,9 +24,6 @@ const FOREVER: TickType_t = TickType_t::MAX;
 /// A bulk transfer this large is one allocation and one submit; the host
 /// library packetises it. Jobs are written in pieces of this.
 const CHUNK: usize = 4096;
-
-/// How long a job will wait for the printer to be attached before failing.
-const ATTACH_WAIT: Duration = Duration::from_secs(10);
 
 /// The printer as currently attached: its handle and the two endpoints.
 #[derive(Clone, Copy)]
@@ -188,11 +186,11 @@ unsafe fn attach(client: usb_host_client_handle_t, addr: u8) -> Result<Attached,
 }
 
 impl Usb {
-    /// The attached printer, waiting up to ATTACH_WAIT for one to appear.
-    fn printer(&self) -> Result<Attached, EspError> {
+    /// The attached printer, waiting up to `wait` for one to appear.
+    fn printer(&self, wait: Duration) -> Result<Attached, EspError> {
         let (lock, cv) = &*self.attached;
         let mut cur = lock.lock().unwrap();
-        let deadline = Instant::now() + ATTACH_WAIT;
+        let deadline = Instant::now() + wait;
 
         while cur.is_none() {
             let Some(left) = deadline.checked_duration_since(Instant::now()) else {
@@ -205,11 +203,15 @@ impl Usb {
         Ok(cur.unwrap())
     }
 
+    /// The printer if it is attached right now.
+    fn attached(&self) -> Result<Attached, EspError> {
+        self.printer(Duration::ZERO)
+    }
+
     /// One bulk transfer, waited for. The completion arrives on the client
     /// thread; a channel brings the status here. `None` on a timeout with
     /// nothing moved, which for a read means the printer had nothing to say.
-    unsafe fn transfer(&self, ep: u8, data: &mut [u8], timeout: Duration) -> Result<Option<usize>, EspError> {
-        let p = self.printer()?;
+    unsafe fn transfer(&self, p: Attached, ep: u8, data: &mut [u8], timeout: Duration) -> Result<Option<usize>, EspError> {
         let out = ep & 0x80 == 0;
 
         let mut xfer: *mut usb_transfer_t = ptr::null_mut();
@@ -273,21 +275,30 @@ unsafe extern "C" fn on_transfer(xfer: *mut usb_transfer_t) {
 }
 
 impl Transport for Usb {
+    fn wait_attached(&self, wait: Duration) -> Result<(), EspError> {
+        self.printer(wait).map(|_| ())
+    }
+
     /// Bulk-out in chunks. Each returns when the printer has taken the bytes;
     /// USB's own flow control holds a chunk while the printer's buffer is
     /// full, so a photo arrives exactly as fast as the printer can take it.
-    fn write(&self, data: &[u8]) -> Result<(), EspError> {
-        let p = self.printer()?;
+    /// Each chunk may wait only for what is left before `deadline`.
+    fn write(&self, data: &[u8], deadline: Instant) -> Result<(), EspError> {
+        let p = self.attached()?;
         for chunk in data.chunks(CHUNK) {
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                log::warn!("job deadline passed with bytes still to send");
+                return Err(EspError::from_infallible::<ESP_ERR_TIMEOUT>());
+            };
             let mut buf = chunk.to_vec();
-            match unsafe { self.transfer(p.out, &mut buf, Duration::from_secs(10)) }? {
+            match unsafe { self.transfer(p, p.out, &mut buf, left) }? {
                 Some(n) if n == chunk.len() => {}
                 Some(n) => {
                     log::warn!("printer took {n} of {} bytes", chunk.len());
                     return Err(EspError::from_infallible::<ESP_FAIL>());
                 }
                 None => {
-                    log::warn!("printer did not take a chunk within 10 s");
+                    log::warn!("printer did not take a chunk before the job deadline");
                     return Err(EspError::from_infallible::<ESP_ERR_TIMEOUT>());
                 }
             }
@@ -300,9 +311,9 @@ impl Transport for Usb {
             return Ok(Some(b));
         }
 
-        let p = self.printer()?;
+        let p = self.attached()?;
         let mut buf = [0u8; 64];
-        match unsafe { self.transfer(p.inp, &mut buf, timeout) }? {
+        match unsafe { self.transfer(p, p.inp, &mut buf, timeout) }? {
             Some(n) if n > 0 => {
                 let mut pending = self.pending.lock().unwrap();
                 pending.extend(&buf[1..n]);
@@ -315,9 +326,9 @@ impl Transport for Usb {
     fn discard_input(&self) -> Result<(), EspError> {
         self.pending.lock().unwrap().clear();
         // Whatever the printer had queued comes out on a short read.
-        let p = self.printer()?;
+        let p = self.attached()?;
         let mut buf = [0u8; 64];
-        let _ = unsafe { self.transfer(p.inp, &mut buf, Duration::from_millis(20)) };
+        let _ = unsafe { self.transfer(p, p.inp, &mut buf, Duration::from_millis(20)) };
         Ok(())
     }
 
