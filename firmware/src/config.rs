@@ -11,16 +11,23 @@ pub const WIFI_PASS: &str = env!("WIFI_PASS");
 pub const MQTT_URL: &str = "wss://fax.pielka.sh/mqtt";
 pub const MQTT_PASS: &str = env!("MQTT_PASS");
 pub const MQTT_USER: &str = "printer";
-pub const CLIENT_ID: &str = "fax-printer-1";
 
-/// Must match DEVICE_ID on the server. Drift and jobs vanish with no error
-/// anywhere, which is why main logs these at boot.
-pub const JOB_TOPIC: &str = "fax/printer-1/job/+";
-pub const STATE_TOPIC: &str = "fax/printer-1/state";
+/// The device id, and so every topic. Must match DEVICE_ID on the server.
+/// Drift and jobs vanish with no error anywhere, which is why main logs the
+/// topics at boot. A macro, since concat! takes only literals.
+macro_rules! device_id {
+    () => {
+        "printer-1"
+    };
+}
+
+pub const CLIENT_ID: &str = concat!("fax-", device_id!());
+pub const JOB_TOPIC: &str = concat!("fax/", device_id!(), "/job/+");
+pub const STATE_TOPIC: &str = concat!("fax/", device_id!(), "/state");
 
 /// A prefix; the job id is appended. The dispatcher matches by topic, so it
 /// never has to parse the payload.
-pub const ACK_TOPIC: &str = "fax/printer-1/ack";
+pub const ACK_TOPIC: &str = concat!("fax/", device_id!(), "/ack");
 
 /// Published, retained, on every connect. Paper is not part of the state: it
 /// is measured per job, right before the bytes go out, and answered in the ack.
