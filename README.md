@@ -49,15 +49,26 @@ dots. When you're done, swipe the receipt off the top of the screen to send it.
   you ─▶ browser ─▶ Caddy ─▶ Go services ─▶ MQTT ─▶ ESP32-S3 ─USB─▶ printer ─▶ receipt ─▶ me
 ```
 
-| piece         | what it does                                                               |
-| ------------- | -------------------------------------------------------------------------- |
-| `frontend/`   | a receipt you type on. Vanilla JS, no build step, dithers photos in-browser |
-| `backend/`    | three tiny Go services: validate, render to ESC/POS, dispatch over MQTT     |
-| `firmware/`   | Rust on an ESP32-S3, acting as USB host for the printer                    |
-| `deploy/`     | Caddy + Mosquitto + Docker Compose on a small VPS                          |
+1. **Browser** (`frontend/`): a receipt you type on. Photos are scaled and
+   dithered to 1-bit right there, then everything goes to `POST /api/print`.
+2. **Caddy**: the only thing facing the internet. Handles HTTPS and routes
+   the site, the API and the MQTT websocket.
+3. **Go services** (`backend/`):
+   - **gateway**: the public API. Checks the message fits the paper and calls
+     the other two.
+   - **renderer**: turns text or a photo into the printer's own command bytes
+     (ESC/POS).
+   - **dispatcher**: publishes the job over MQTT and waits for the printer to
+     answer.
+4. **Mosquitto**: the message broker. The printer's account can receive jobs
+   but never create them.
+5. **ESP32-S3** (`firmware/`, Rust): sits next to the printer and dials out
+   to the broker over a secure websocket, so nothing at home is exposed. It
+   checks for paper, pushes the bytes over USB and acks back.
 
-The site only says "printed" once the printer confirms it had paper and
-took the bytes.
+The request waits the whole way, so the site only says "printed" once the
+printer has actually taken the job. It all runs with Docker Compose on a
+small VPS (`deploy/`).
 
 <!-- TODO: photo of the hardware (ESP32-S3 + printer) -->
 
