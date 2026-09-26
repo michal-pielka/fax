@@ -11,16 +11,18 @@
 
   /* The textarea holds the text and the browser owns editing: caret, selection,
      undo, IME, mobile keyboards. This module owns only two things the textarea
-     cannot: a style per character, and the size of the paper. */
-  const BOLD = 1, UNDER = 2, INVERT = 4;
+     cannot: a style per character, and the size of the paper. A style is a
+     byte of bits, one per tool below. */
 
   /* Only what the printer does. Anything else would look right here and
-     silently vanish on paper. */
+     silently vanish on paper. cls is the mirror's class, json the server's
+     field name. */
   const TOOLS = [
-    { key: 'bold',   label: 'B', title: 'Bold (Ctrl+B)',                    bit: BOLD },
-    { key: 'under',  label: 'U', title: 'Underline (Ctrl+U)',               bit: UNDER },
-    { key: 'invert', label: 'A', title: 'Reverse, white on black (Ctrl+I)', bit: INVERT },
+    { key: 'bold',   label: 'B', title: 'Bold (Ctrl+B)',                    bit: 1, shortcut: 'b', cls: 'b', json: 'bold' },
+    { key: 'under',  label: 'U', title: 'Underline (Ctrl+U)',               bit: 2, shortcut: 'u', cls: 'u', json: 'underline' },
+    { key: 'invert', label: 'A', title: 'Reverse, white on black (Ctrl+I)', bit: 4, shortcut: 'i', cls: 'i', json: 'invert' },
   ];
+  const toolsIn = (style) => TOOLS.filter(t => style & t.bit);
 
   /* One byte per character of ta.value, kept the same length at all times.
      Raw: what was applied. What shows and what prints is effective(). */
@@ -84,19 +86,17 @@
     return out;
   }
 
-  /* The value and selection after the last edit we accounted for. */
-  let last = { text: '' };
+  /* The value after the last edit we accounted for. */
+  let lastText = '';
 
-  function remember() {
-    last = { text: ta.value };
-  }
+  const remember = () => { lastText = ta.value; };
 
   /* Reconcile styles after the textarea changed underneath us. Every edit a
      textarea can make -- typing, deleting, paste, drop, IME, undo -- replaces
      one contiguous range, so the old and new text differ in one place. Find
      it, and decide what the inserted characters look like. */
   function reconcile() {
-    const oldT = last.text, newT = ta.value;
+    const oldT = lastText, newT = ta.value;
     if (oldT === newT) return;
 
     let p = 0;
@@ -133,6 +133,19 @@
     styles = next;
   }
 
+  /* Whether every selected character has `bit`, or null if the selection is
+     nothing but spaces. Spaces neither count towards "all on" nor matter when
+     set: effective() decides what they show. */
+  function selectionHas(bit) {
+    let any = false;
+    for (let i = ta.selectionStart; i < ta.selectionEnd; i++) {
+      if (isSpace(ta.value[i])) continue;
+      if (!(styles[i] & bit)) return false;
+      any = true;
+    }
+    return any ? true : null;
+  }
+
   /* A key with text selected styles the selection and nothing else. With no
      selection it switches the typing mode. */
   function applyTool(t) {
@@ -144,15 +157,8 @@
       return;
     }
 
-    /* Spaces neither count towards "all on" nor matter when set: effective()
-       decides what they show. A selection of nothing but spaces is a no-op. */
-    let allOn = true, any = false;
-    for (let i = a; i < b; i++) {
-      if (isSpace(ta.value[i])) continue;
-      any = true;
-      if (!(styles[i] & t.bit)) { allOn = false; break; }
-    }
-    if (!any) return;
+    const allOn = selectionHas(t.bit);
+    if (allOn === null) return;
     for (let i = a; i < b; i++) styles[i] = allOn ? styles[i] & ~t.bit : styles[i] | t.bit;
 
     render();
@@ -161,36 +167,31 @@
 
   /* ---- rendering ------------------------------------------------------ */
 
-  function classesOf(style) {
-    const c = [];
-    if (style & BOLD) c.push('b');
-    if (style & UNDER) c.push('u');
-    if (style & INVERT) c.push('i');
-    return c.join(' ');
+  /* Maximal stretches of characters sharing one style. */
+  function* runs(text, shown) {
+    let i = 0;
+    while (i < text.length) {
+      let j = i + 1;
+      while (j < text.length && shown[j] === shown[i]) j++;
+      yield { start: i, end: j, style: shown[i] };
+      i = j;
+    }
   }
 
   /* The mirror shows the styled text under a transparent textarea. Same font,
      same width, same wrapping, so its glyphs sit exactly under the invisible
      ones the caret moves through. */
   function render() {
-    const text = ta.value, shown = effective();
+    const text = ta.value;
     const frag = document.createDocumentFragment();
-    let i = 0;
 
-    while (i < text.length) {
-      let j = i + 1;
-      while (j < text.length && shown[j] === shown[i]) j++;
-
-      const run = text.slice(i, j);
-      if (shown[i]) {
-        const span = document.createElement('span');
-        span.className = classesOf(shown[i]);
-        span.textContent = run;
-        frag.append(span);
-      } else {
-        frag.append(run);
-      }
-      i = j;
+    for (const { start, end, style } of runs(text, effective())) {
+      const run = text.slice(start, end);
+      if (!style) { frag.append(run); continue; }
+      const span = document.createElement('span');
+      span.className = toolsIn(style).map(t => t.cls).join(' ');
+      span.textContent = run;
+      frag.append(span);
     }
 
     /* A trailing newline needs something after it or the browser drops the
@@ -202,29 +203,11 @@
 
   /* ---- the keys ------------------------------------------------------- */
 
-  TOOLS.forEach(t => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.title = t.title; b.dataset.key = t.key; b.className = t.key + ' style';
-    b.setAttribute('aria-pressed', 'false');
-    /* The label sits in its own element so the reverse key can draw a
-       filled cell around its letter. */
-    const label = document.createElement('span');
-    /* The reverse key's letter is drawn by CSS inside a filled cell. */
-    if (t.key !== 'invert') label.textContent = t.label;
-    b.append(label);
-    /* A key must not move focus: if the paper is being written on it keeps
-       the caret and selection, and if it is not, pressing a key must not
-       open a phone's keyboard. pointerdown covers touch, where cancelling
-       mousedown alone comes too late. Nothing here ever calls focus(). */
-    b.addEventListener('pointerdown', e => e.preventDefault());
-    b.addEventListener('mousedown', e => e.preventDefault());
-    b.addEventListener('click', () => applyTool(t));
-    keys.append(b);
-  });
-
-  /* Two more keys, not styles: one puts a picture on the paper, the other
-     takes it off again. Same look, same no-focus rule. */
+  /* The label sits in its own element so the reverse key can draw a filled
+     cell around its letter. A key must not move focus: if the paper is being
+     written on it keeps the caret and selection, and if it is not, pressing a
+     key must not open a phone's keyboard. pointerdown covers touch, where
+     cancelling mousedown alone comes too late. Nothing here calls focus(). */
   const key = (cls, label, title, onClick) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = cls; b.title = title;
@@ -233,27 +216,28 @@
     b.addEventListener('mousedown', e => e.preventDefault());
     b.addEventListener('click', onClick);
     keys.append(b);
+    return b;
   };
 
+  TOOLS.forEach(t => {
+    /* The reverse key's letter is drawn by CSS inside a filled cell. */
+    const b = key(t.key + ' style', t.key === 'invert' ? '' : t.label, t.title, () => applyTool(t));
+    b.dataset.key = t.key;
+    b.setAttribute('aria-pressed', 'false');
+  });
+
+  /* Two more keys, not styles: one puts a picture on the paper, the other
+     takes it off again. */
   key('pick', 'PHOTO', 'Print a photo instead', () => file.click());
   key('remove', 'REMOVE', 'Back to words', () => setPhoto(null));
 
   /* Pressed means: with a selection, every selected character has it; with a
      bare caret, it is part of the typing mode. */
   function syncKeys() {
-    const a = ta.selectionStart, b = ta.selectionEnd;
+    const caret = ta.selectionStart === ta.selectionEnd;
     keys.querySelectorAll('button.style').forEach(btn => {
       const t = TOOLS.find(x => x.key === btn.dataset.key);
-      let on;
-      if (a === b) on = !!(mode & t.bit);
-      else {
-        on = false;
-        for (let i = a; i < b; i++) {
-          if (isSpace(ta.value[i])) continue;
-          on = true;
-          if (!(styles[i] & t.bit)) { on = false; break; }
-        }
-      }
+      const on = caret ? !!(mode & t.bit) : !!selectionHas(t.bit);
       btn.setAttribute('aria-pressed', String(on));
     });
   }
@@ -288,7 +272,7 @@
     const pic = imageIn(e.clipboardData);
     if (pic) { loadPhoto(pic); return; }
 
-    const text = (e.clipboardData || window.clipboardData)?.getData('text/plain') || '';
+    const text = e.clipboardData?.getData('text/plain') || '';
     if (!text) return;
 
     const part = fitting(text);
@@ -306,7 +290,7 @@
     /* Anything that slipped past beforeinput -- IME, drop, autocorrect.
        Rare, so a plain restore is acceptable here. */
     if (!fits(ta.value)) {
-      ta.value = last.text;
+      ta.value = lastText;
     }
 
     reconcile();
@@ -320,8 +304,8 @@
     const meta = e.metaKey || e.ctrlKey;
     if (!meta) return;
     if (e.key === 'Enter') { e.preventDefault(); if (phase === 'rest') submit(); return; }
-    const tool = { b: 'bold', u: 'under', i: 'invert' }[e.key.toLowerCase()];
-    if (tool) { e.preventDefault(); applyTool(TOOLS.find(t => t.key === tool)); }
+    const tool = TOOLS.find(t => t.shortcut === e.key.toLowerCase());
+    if (tool) { e.preventDefault(); applyTool(tool); }
   });
 
   /* The textarea scrolls to chase the caret even with the content fitting,
@@ -332,22 +316,13 @@
 
   /* The server wants flat text plus character ranges, so each run of styled
      characters becomes one span. */
-  function document_() {
-    const text = ta.value, shown = effective();
-    const spans = [];
-    let i = 0;
-
-    while (i < text.length) {
-      if (!shown[i]) { i++; continue; }
-      let j = i + 1;
-      while (j < text.length && shown[j] === shown[i]) j++;
-      const style = {};
-      if (shown[i] & BOLD) style.bold = true;
-      if (shown[i] & UNDER) style.underline = true;
-      if (shown[i] & INVERT) style.invert = true;
-      spans.push({ start: i, end: j, style });
-      i = j;
-    }
+  function toDocument() {
+    const text = ta.value;
+    const spans = [...runs(text, effective())]
+      .filter(r => r.style)
+      .map(({ start, end, style }) => ({
+        start, end, style: Object.fromEntries(toolsIn(style).map(t => [t.json, true])),
+      }));
 
     return { text, ...(spans.length && { spans }) };
   }
@@ -364,8 +339,9 @@
   /* ---- a photo instead of words ---------------------------------------- */
 
   /* The printer's picture: PHOTO_W dots wide, at most PHOTO_H tall, one bit a
-     dot. The server checks exactly these two numbers. */
-  const PHOTO_W = 384, PHOTO_H = 384;
+     dot. The server checks exactly these two numbers. The width is the
+     canvas's, set in the HTML, so there is one copy of it on this side. */
+  const PHOTO_W = canvas.width, PHOTO_H = 384;
 
   /* The picture on the paper, or null: its packed rows and its height. The
      receipt is either words or this, never both. */
@@ -677,7 +653,7 @@
      together; whichever finishes last decides when the next sheet arrives,
      so the paper is never swapped in front of someone's eyes. */
   async function submit() {
-    const doc = photo ? null : document_();
+    const doc = photo ? null : toDocument();
     if (!photo && !doc.text.trim()) {
       setStatus('nothing to print', true);
       phase = 'settle';
