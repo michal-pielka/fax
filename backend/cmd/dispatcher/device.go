@@ -13,7 +13,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/michal-pielka/fax/server/internal/logging"
-	"github.com/michal-pielka/fax/server/internal/wire"
+	"github.com/michal-pielka/fax/server/internal/timeouts"
 )
 
 // Errors the printer itself is responsible for, as opposed to the dispatcher
@@ -26,16 +26,6 @@ var (
 	// and said nothing: it may well have printed, and nobody can say so.
 	ErrNoConfirmation = errors.New("printer did not confirm; it may still have printed")
 )
-
-// ackTimeout is how long to wait for the firmware's answer to a job of n
-// bytes. The bytes take their wire time to reach the printer; the firmware
-// then allows the printer the same again to finish printing them, since a
-// dense photo prints slower than it arrives, plus five seconds; two more here
-// so a printer that gives up gets to say why rather than leaving this to
-// guess. The gateway's deadline must exceed this in turn.
-func ackTimeout(n int) time.Duration {
-	return 2*wire.Time(n) + 7*time.Second
-}
 
 // State is what the device last told us: the retained message it publishes on
 // connect, or the last will the broker publishes when it vanishes. The zero
@@ -248,7 +238,7 @@ func (d *Device) State() State {
 // what stopped it. The printer is claimed for the whole exchange.
 func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	// The one check made here: an offline device would cost the caller the
-	// full ackTimeout to learn what the last will already says.
+	// full ack timeout to learn what the last will already says.
 	if !d.State().Online {
 		return ErrOffline
 	}
@@ -286,7 +276,7 @@ func (d *Device) Publish(ctx context.Context, id string, payload []byte) error {
 	// while the job is still on it.
 	done := make(chan error, 1)
 
-	go func() { done <- d.awaitAck(id, acks, ackTimeout(len(payload))) }()
+	go func() { done <- d.awaitAck(id, acks, timeouts.Ack) }()
 
 	select {
 	case err := <-done:

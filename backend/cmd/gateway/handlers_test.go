@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/httpx"
@@ -175,19 +174,6 @@ func TestPrintRefusesOtherContentTypes(t *testing.T) {
 		if rec.Code != http.StatusUnsupportedMediaType {
 			t.Errorf("%q: status = %d, want 415", ct, rec.Code)
 		}
-	}
-}
-
-// Text waits a flat ten seconds; a picture waits for its bytes as well.
-func TestPrintTimeoutScalesWithPayload(t *testing.T) {
-	small, large := printTimeout(300), printTimeout(18_000)
-
-	if small < 10*time.Second || small > 11*time.Second {
-		t.Errorf("text timeout = %v, want about 10s", small)
-	}
-
-	if large < 47*time.Second || large > 49*time.Second {
-		t.Errorf("photo timeout = %v, want about 48s", large)
 	}
 }
 

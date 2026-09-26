@@ -12,6 +12,7 @@ import (
 
 	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
+	"github.com/michal-pielka/fax/server/internal/timeouts"
 )
 
 const connectTimeout = 15 * time.Second
@@ -66,10 +67,8 @@ func main() {
 		Handler:           logging.Requests(log)(a.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Must exceed the longest ackTimeout, or a print request that is
-		// legitimately waiting on a photo is cut off before it can answer.
-		// A square photo may wait about 45 seconds.
-		WriteTimeout: 90 * time.Second,
+		// Must exceed the ack wait; the timeouts test checks it does.
+		WriteTimeout: timeouts.Write,
 		IdleTimeout:  60 * time.Second,
 	}
 

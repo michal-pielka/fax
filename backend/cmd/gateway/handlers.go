@@ -8,27 +8,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 	"unicode/utf8"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
-	"github.com/michal-pielka/fax/server/internal/wire"
+	"github.com/michal-pielka/fax/server/internal/timeouts"
 )
 
 // maxBody caps the body before anything reads it. Validate stops a large
 // document; only this stops one that never stops arriving. A dithered square
 // photo is under 20 KB as PNG, so the same cap serves both kinds.
 const maxBody = 64 << 10 // 64 KiB
-
-// printTimeout is how long to wait for the dispatcher: its own ackTimeout,
-// which allows the payload its wire time twice, plus three seconds of ours.
-// Text is a few hundred bytes and waits about ten seconds at most; a square
-// photo is 18 KB and may wait close to fifty.
-func printTimeout(payload int) time.Duration {
-	return 2*wire.Time(payload) + 10*time.Second
-}
 
 type api struct {
 	renderer   Renderer
@@ -119,9 +110,9 @@ func (a *api) send(w http.ResponseWriter, r *http.Request, payload []byte, attrs
 	// the firmware. Stored nowhere: it lives as long as the request.
 	id := logging.Trace(r.Context())
 
-	// Blocks until the firmware has answered for the job. For text that is
-	// about a second; for a picture, however long its bytes take on the wire.
-	ctx, cancel := context.WithTimeout(r.Context(), printTimeout(len(payload)))
+	// Blocks until the firmware has answered for the job: about a second when
+	// the printer is there, and never past timeouts.Print when it is not.
+	ctx, cancel := context.WithTimeout(r.Context(), timeouts.Print)
 	defer cancel()
 
 	if err := a.dispatcher.Print(ctx, id, payload); err != nil {

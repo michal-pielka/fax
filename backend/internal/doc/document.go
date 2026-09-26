@@ -13,7 +13,7 @@ const (
 	// the browser scales it, the server only checks.
 	PhotoWidth = 384
 	// PhotoMaxRows caps a photo's height in dots. A square: 48 mm of paper,
-	// about 18 KB of raster, nineteen seconds on the wire at 9600 baud.
+	// about 18 KB of raster.
 	PhotoMaxRows = 384
 )
 

@@ -117,12 +117,9 @@ func Render(d doc.Document) []byte {
 // PhotoWidth wide -- the caller validated that -- and any pixel darker than
 // mid-grey prints. The browser dithered it; this only packs bits.
 //
-// The picture is one raster command, streamed. Over a 9600 baud wire the
-// head prints each row as it arrives and outruns the wire on light rows, so
-// the paper stutters there. That is the wire's speed, not a fault, and the
-// alternatives -- storing pieces in the printer and guessing how long each
-// takes to print -- cost more than they gave. Simple, correct, a little
-// jerky.
+// The picture is one raster command. Over USB the whole of it is in the
+// printer's buffer before the head has moved, and flow control holds the
+// rest while it prints, so it comes out in one motion.
 func RenderPhoto(img image.Image) []byte {
 	var buf bytes.Buffer
 

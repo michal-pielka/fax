@@ -11,10 +11,11 @@ import (
 
 	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
+	"github.com/michal-pielka/fax/server/internal/timeouts"
 )
 
 // Rendering is quick, so its client has a flat timeout. Printing waits on
-// the wire and gets a per-request deadline instead (see printTimeout).
+// the printer and gets a per-request deadline instead (see timeouts.Print).
 const renderTimeout = 5 * time.Second
 
 func main() {
@@ -39,7 +40,7 @@ func main() {
 	}
 
 	// A client each, because the timeouts differ. The dispatcher's has none
-	// of its own: every print carries a deadline sized to its payload.
+	// of its own: every print carries its own deadline.
 	a := &api{
 		renderer:   NewRendererClient(*rendererURL, &http.Client{Timeout: renderTimeout}),
 		dispatcher: NewDispatcherClient(*dispatcherURL, &http.Client{}),
@@ -54,9 +55,8 @@ func main() {
 		// Without these one slow client holds a connection open forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		// Must exceed the longest print: a square photo may wait close to
-		// fifty seconds (see printTimeout).
-		WriteTimeout: 90 * time.Second,
+		// Must exceed the longest print; the timeouts test checks it does.
+		WriteTimeout: timeouts.Write,
 		IdleTimeout:  60 * time.Second,
 	}
 

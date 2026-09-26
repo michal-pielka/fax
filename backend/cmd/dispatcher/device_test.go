@@ -115,18 +115,6 @@ func TestAwaitAckMapsTheAnswer(t *testing.T) {
 	}
 }
 
-// A photo's bytes take real time on the wire; the wait must grow with them.
-func TestAckTimeoutScalesWithPayload(t *testing.T) {
-	if got := ackTimeout(0); got != 7*time.Second {
-		t.Errorf("ackTimeout(0) = %v, want 7s", got)
-	}
-
-	// 18 KB at 9600 baud is about 19 seconds on the wire, allowed twice.
-	if got := ackTimeout(18_000); got < 44*time.Second || got > 46*time.Second {
-		t.Errorf("ackTimeout(18000) = %v, want about 45s", got)
-	}
-}
-
 // busy needs no bookkeeping: an unfinished job is exactly an outstanding
 // waiter.
 func (d *Device) busy() bool {
