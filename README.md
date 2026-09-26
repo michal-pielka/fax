@@ -1,33 +1,8 @@
-<div align="center">
-
-```
- ________________________________
-|                                |
-|        *** F  A  X ***         |
-|                                |
-|   a receipt printer in my      |
-|   flat. you type, it prints.   |
-|   on real paper. for real.     |
-|                                |
-|  ----------------------------  |
-|   NO APP        NO ACCOUNT     |
-|   NO ALGORITHM  NO LIKES       |
-|  ----------------------------  |
-|                                |
-|   >> fax.pielka.sh <<          |
-|                                |
-|      THANK YOU, COME AGAIN     |
-|________________________________|
- \/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/
-```
-
 # [fax.pielka.sh](https://fax.pielka.sh)
 
 **Go print me something. Seriously. I read every one.**
 
 <!-- TODO: hero video of a receipt coming out of the printer -->
-
-</div>
 
 ---
 
@@ -41,12 +16,12 @@ You get nine lines of 32 characters, plus **bold**, underline and
 white-on-black. Or send a photo, and it gets dithered into glorious 1-bit
 dots. When you're done, swipe the receipt off the top of the screen to send it.
 
-<!-- TODO: photo wall of received receipts -->
+<img width="1170" height="1428" alt="fax" src="https://github.com/user-attachments/assets/06aea23a-3358-4060-b0b3-5a38798ee363" />
 
 ## how it works
 
 ```
-  you ─▶ browser ─▶ Caddy ─▶ Go services ─▶ MQTT ─▶ ESP32-S3 ─USB─▶ printer ─▶ receipt ─▶ me
+  you ─> browser ─> Caddy ─> Go services ─> MQTT ─> ESP32-S3 ─USB ─> printer ─> receipt ─> me
 ```
 
 1. **Browser** (`frontend/`): a receipt you type on. Photos are scaled and
