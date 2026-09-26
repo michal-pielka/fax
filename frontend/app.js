@@ -668,7 +668,10 @@
   roll.addEventListener('pointercancel', release);
   /* A capture lost without an up -- the browser took the pointer for
      itself -- ends the drag the same way. */
-  roll.addEventListener('lostpointercapture', (e) => { if (drag) release({ ...e, type: 'pointercancel', clientY: Infinity }); });
+  roll.addEventListener('lostpointercapture', (e) => {
+    /* Not a spread: an event's fields are prototype getters and would be lost. */
+    if (drag) release({ pointerId: e.pointerId, timeStamp: e.timeStamp, type: 'pointercancel', clientY: Infinity });
+  });
 
   /* Send the job and let the receipt go. The request and the flight run
      together; whichever finishes last decides when the next sheet arrives,
