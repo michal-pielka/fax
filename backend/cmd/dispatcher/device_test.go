@@ -126,3 +126,12 @@ func TestAckTimeoutScalesWithPayload(t *testing.T) {
 		t.Errorf("ackTimeout(18000) = %v, want about 45s", got)
 	}
 }
+
+// busy needs no bookkeeping: an unfinished job is exactly an outstanding
+// waiter.
+func (d *Device) busy() bool {
+	d.waitMu.Lock()
+	defer d.waitMu.Unlock()
+
+	return len(d.waiting) > 0
+}

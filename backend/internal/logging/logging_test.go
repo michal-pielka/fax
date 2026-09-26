@@ -196,6 +196,11 @@ func TestTruncate(t *testing.T) {
 	if got := Truncate(strings.Repeat("x", 100), 10); got != strings.Repeat("x", 10)+"..." {
 		t.Errorf("Truncate = %q", got)
 	}
+
+	// "é" is two bytes; cutting between them would log invalid UTF-8.
+	if got := Truncate("aé", 2); got != "a..." {
+		t.Errorf("Truncate split a rune: %q", got)
+	}
 }
 
 // The message is attacker controlled and goes straight into the log, so a

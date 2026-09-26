@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
@@ -44,7 +43,6 @@ func main() {
 	a := &api{
 		renderer:   NewRendererClient(*rendererURL, &http.Client{Timeout: renderTimeout}),
 		dispatcher: NewDispatcherClient(*dispatcherURL, &http.Client{}),
-		limits:     doc.Paper,
 		photos:     *photosDir,
 		log:        log,
 	}

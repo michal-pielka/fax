@@ -17,8 +17,7 @@ import (
 
 func newAPI() *api {
 	return &api{
-		limits: doc.Paper,
-		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

@@ -70,7 +70,6 @@ func newAPI(r Renderer, d Dispatcher) *api {
 	return &api{
 		renderer:   r,
 		dispatcher: d,
-		limits:     doc.Paper,
 		log:        log,
 	}
 }

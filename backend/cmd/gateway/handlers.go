@@ -33,7 +33,6 @@ func printTimeout(payload int) time.Duration {
 type api struct {
 	renderer   Renderer
 	dispatcher Dispatcher
-	limits     doc.Limits
 	// photos is a directory to keep a copy of every picture printed, or
 	// empty. Text is logged in full; this is the same courtesy for pictures.
 	photos string
@@ -71,7 +70,7 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 func (a *api) printText(w http.ResponseWriter, r *http.Request) {
 	// The renderer validates too, but rejecting here saves a round trip and
 	// keeps the public error messages under this service's control.
-	d, err := doc.Decode(r.Body, a.limits)
+	d, err := doc.Decode(r.Body, doc.Paper)
 	if err != nil {
 		a.fail(w, r, http.StatusBadRequest, err.Error())
 		return

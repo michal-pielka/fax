@@ -19,8 +19,7 @@ import (
 const maxBody = 64 << 10 // 64 KiB
 
 type api struct {
-	limits doc.Limits
-	log    *slog.Logger
+	log *slog.Logger
 }
 
 func (a *api) routes() *http.ServeMux {
@@ -58,7 +57,9 @@ func (a *api) render(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) renderText(w http.ResponseWriter, r *http.Request) {
-	d, err := doc.Decode(r.Body, a.limits)
+	// Validated again rather than trusted: Render assumes byte offsets are
+	// character positions, which holds only for what Validate lets through.
+	d, err := doc.Decode(r.Body, doc.Paper)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return

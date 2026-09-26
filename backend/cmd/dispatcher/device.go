@@ -104,13 +104,13 @@ func newTopics(device string) topics {
 }
 
 type Config struct {
+	// The URL scheme decides TLS: ssl://host:8883 in production, tcp:// only
+	// where credentials crossing in the clear is acceptable.
 	Broker   string
 	ClientID string
 	Username string
 	Password string
 	Device   string
-	// The URL scheme decides TLS: ssl://host:8883 in production, tcp:// only
-	// where credentials crossing in the clear is acceptable.
 }
 
 func NewDevice(cfg Config, log *slog.Logger) *Device {
@@ -345,13 +345,4 @@ func (d *Device) stopWaiting(id string) {
 	d.waitMu.Lock()
 	delete(d.waiting, id)
 	d.waitMu.Unlock()
-}
-
-// busy needs no bookkeeping: an unfinished job is exactly an outstanding
-// waiter.
-func (d *Device) busy() bool {
-	d.waitMu.Lock()
-	defer d.waitMu.Unlock()
-
-	return len(d.waiting) > 0
 }

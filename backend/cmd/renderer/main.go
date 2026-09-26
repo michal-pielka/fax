@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/michal-pielka/fax/server/internal/doc"
 	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
@@ -25,12 +24,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Validated again rather than trusted: Render assumes byte offsets are
-	// character positions, which holds only for what Validate lets through.
-	a := &api{
-		limits: doc.Paper,
-		log:    log,
-	}
+	a := &api{log: log}
 
 	srv := &http.Server{
 		Addr: *addr,

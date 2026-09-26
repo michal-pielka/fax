@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -164,10 +165,15 @@ func (w *recorder) Write(b []byte) (int, error) {
 func (w *recorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // Truncate bounds a string from elsewhere, so whatever sent it does not decide
-// how much of the log it occupies.
+// how much of the log it occupies. n is in bytes; the cut backs up to a rune
+// boundary rather than split a character.
 func Truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 
 	return s[:n] + "..."
