@@ -57,4 +57,3 @@ pub const JOB_DEADLINE: Duration = Duration::from_secs(20);
 /// max_packet_size: anything the broker lets through fits, and a claimed size
 /// beyond it is refused before a byte is allocated. A square photo is ~19 KB.
 pub const MAX_JOB: usize = 32 * 1024;
-

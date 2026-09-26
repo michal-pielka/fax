@@ -66,12 +66,25 @@ pub fn connect() -> Result<(EspMqttClient<'static>, Receiver<Event>), EspError> 
 
             // One topic subscribed, so this is a job, or a piece of one. Only
             // the first piece carries the topic; the rest carry an offset.
-            EventPayload::Received { topic, data, details, .. } => {
-                let Some((id, payload)) = jobs.feed(topic, data, &details) else { return };
+            EventPayload::Received {
+                topic,
+                data,
+                details,
+                ..
+            } => {
+                let Some((id, payload)) = jobs.feed(topic, data, &details) else {
+                    return;
+                };
 
                 // No queue in this design: shed work rather than exhaust the
                 // heap and reboot mid-receipt.
-                if tx.try_send(Event::Job { id: id.clone(), payload }).is_err() {
+                if tx
+                    .try_send(Event::Job {
+                        id: id.clone(),
+                        payload,
+                    })
+                    .is_err()
+                {
                     log::warn!("channel full, dropped job {id}");
                 }
             }
@@ -107,7 +120,12 @@ struct Partial {
 impl Assembler {
     /// Takes one piece, and returns the job id and payload once the job is
     /// whole. A piece that does not fit what came before drops the job.
-    fn feed(&mut self, topic: Option<&str>, data: &[u8], details: &Details) -> Option<(String, Vec<u8>)> {
+    fn feed(
+        &mut self,
+        topic: Option<&str>,
+        data: &[u8],
+        details: &Details,
+    ) -> Option<(String, Vec<u8>)> {
         match details {
             Details::Complete => {
                 // A new message abandons whatever was half-assembled.
@@ -121,12 +139,19 @@ impl Assembler {
                 // Refused before allocating: the claimed size is the sender's
                 // word, and the heap is 300 KB.
                 if first.total_data_size > config::MAX_JOB {
-                    log::warn!("job {id} is {} bytes, over the limit, dropped", first.total_data_size);
+                    log::warn!(
+                        "job {id} is {} bytes, over the limit, dropped",
+                        first.total_data_size
+                    );
                     return None;
                 }
                 let mut buf = Vec::with_capacity(first.total_data_size);
                 buf.extend_from_slice(data);
-                self.partial = Some(Partial { id, buf, total: first.total_data_size });
+                self.partial = Some(Partial {
+                    id,
+                    buf,
+                    total: first.total_data_size,
+                });
                 None
             }
 

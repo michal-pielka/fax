@@ -87,14 +87,20 @@ pub fn open() -> Result<Usb, EspError> {
             for plug in rx {
                 let (lock, cv) = &*watched;
                 match plug {
-                    Plug::New(addr) => match attach(client_addr as usb_host_client_handle_t, addr) {
-                        Ok(a) => {
-                            log::info!("printer attached on usb, out {:#04x} in {:#04x}", a.out, a.inp);
-                            *lock.lock().unwrap() = Some(a);
-                            cv.notify_all();
+                    Plug::New(addr) => {
+                        match attach(client_addr as usb_host_client_handle_t, addr) {
+                            Ok(a) => {
+                                log::info!(
+                                    "printer attached on usb, out {:#04x} in {:#04x}",
+                                    a.out,
+                                    a.inp
+                                );
+                                *lock.lock().unwrap() = Some(a);
+                                cv.notify_all();
+                            }
+                            Err(e) => log::warn!("usb device {addr} is not our printer: {e}"),
                         }
-                        Err(e) => log::warn!("usb device {addr} is not our printer: {e}"),
-                    },
+                    }
                     Plug::Gone(dev) => {
                         let mut cur = lock.lock().unwrap();
                         if cur.map(|a| a.dev) == Some(dev) {
@@ -107,7 +113,10 @@ pub fn open() -> Result<Usb, EspError> {
             }
         });
 
-        Ok(Usb { attached, pending: Mutex::new(VecDeque::new()) })
+        Ok(Usb {
+            attached,
+            pending: Mutex::new(VecDeque::new()),
+        })
     }
 }
 
@@ -211,7 +220,13 @@ impl Usb {
     /// One bulk transfer, waited for. The completion arrives on the client
     /// thread; a channel brings the status here. `None` on a timeout with
     /// nothing moved, which for a read means the printer had nothing to say.
-    unsafe fn transfer(&self, p: Attached, ep: u8, data: &mut [u8], timeout: Duration) -> Result<Option<usize>, EspError> {
+    unsafe fn transfer(
+        &self,
+        p: Attached,
+        ep: u8,
+        data: &mut [u8],
+        timeout: Duration,
+    ) -> Result<Option<usize>, EspError> {
         let out = ep & 0x80 == 0;
 
         let mut xfer: *mut usb_transfer_t = ptr::null_mut();
@@ -234,13 +249,19 @@ impl Usb {
         let result = match submitted {
             Err(e) => Err(e),
             Ok(()) => match rx.recv_timeout(timeout) {
-                Ok((status, n)) if status == usb_transfer_status_t_USB_TRANSFER_STATUS_COMPLETED => {
+                Ok((status, n))
+                    if status == usb_transfer_status_t_USB_TRANSFER_STATUS_COMPLETED =>
+                {
                     if !out {
                         ptr::copy_nonoverlapping(x.data_buffer, data.as_mut_ptr(), n as usize);
                     }
                     Ok(Some(n as usize))
                 }
-                Ok((status, _)) if status == usb_transfer_status_t_USB_TRANSFER_STATUS_TIMED_OUT => Ok(None),
+                Ok((status, _))
+                    if status == usb_transfer_status_t_USB_TRANSFER_STATUS_TIMED_OUT =>
+                {
+                    Ok(None)
+                }
                 Ok((status, n)) => {
                     log::warn!("usb transfer on {ep:#04x}: status {status}, {n} bytes");
                     Err(EspError::from_infallible::<ESP_FAIL>())
@@ -331,5 +352,4 @@ impl Transport for Usb {
         let _ = unsafe { self.transfer(p, p.inp, &mut buf, Duration::from_millis(20)) };
         Ok(())
     }
-
 }
