@@ -3,15 +3,22 @@
 
 name: fax
 
+# The three Go services are pulled from the registry, where GitHub Actions put
+# them (see .github/workflows/images.yml). FAX_TAG pins a commit; unset is
+# latest. `build:` stays for development: `docker compose up --build` compiles
+# here instead. The VPS never passes --build.
+
+# json-file never rotates by default, and a full disk takes Caddy down with
+# everything else. 30 MB per service is months of history here.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
 services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    # json-file never rotates by default, and a full disk takes Caddy down
-    # with everything else. 30 MB per service is months of history here.
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *logging
     ports:
       # The only ports open to the internet. 80 exists so Caddy can answer
       # the ACME challenge and redirect; everything real is on 443.
@@ -26,18 +33,13 @@ services:
     depends_on: [gateway]
 
   gateway:
-    # Pulled from the registry, where GitHub Actions put it (see
-    # .github/workflows/images.yml). FAX_TAG pins a commit; unset is latest.
-    # `build:` stays for development: `docker compose up --build` compiles
-    # here instead. The VPS never passes --build.
+    # Pulled from the registry; see the note at the top.
     image: ghcr.io/michal-pielka/fax-gateway:${FAX_TAG:-latest}
     build:
       context: ./backend
       dockerfile: cmd/gateway/Dockerfile
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *logging
     command:
       - "-addr=:8080"
       - "-renderer=http://renderer:8081"
@@ -51,32 +53,22 @@ services:
     depends_on: [renderer, dispatcher]
 
   renderer:
-    # Pulled from the registry, where GitHub Actions put it (see
-    # .github/workflows/images.yml). FAX_TAG pins a commit; unset is latest.
-    # `build:` stays for development: `docker compose up --build` compiles
-    # here instead. The VPS never passes --build.
+    # Pulled from the registry; see the note at the top.
     image: ghcr.io/michal-pielka/fax-renderer:${FAX_TAG:-latest}
     build:
       context: ./backend
       dockerfile: cmd/renderer/Dockerfile
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *logging
 
   dispatcher:
-    # Pulled from the registry, where GitHub Actions put it (see
-    # .github/workflows/images.yml). FAX_TAG pins a commit; unset is latest.
-    # `build:` stays for development: `docker compose up --build` compiles
-    # here instead. The VPS never passes --build.
+    # Pulled from the registry; see the note at the top.
     image: ghcr.io/michal-pielka/fax-dispatcher:${FAX_TAG:-latest}
     build:
       context: ./backend
       dockerfile: cmd/dispatcher/Dockerfile
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *logging
     command:
       - "-addr=:8082"
       - "-broker=tcp://mosquitto:1883"
@@ -91,9 +83,7 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *logging
     # No published ports: 1883 for the dispatcher and 9001 for Caddy are
     # reachable only from inside this network.
     volumes:
