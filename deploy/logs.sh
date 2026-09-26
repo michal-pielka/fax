@@ -34,6 +34,11 @@ if [[ "${1:-}" == "--since" || "${1:-}" == "-s" ]]; then
 	shift 2
 fi
 
+# Folds compose's "service | " prefix into the JSON object as "svc".
+fold_svc() {
+	sed -E 's/^([^ |]+)[[:space:]]*\|[[:space:]]*\{/{"svc":"\1",/'
+}
+
 # Lines the Go services and Caddy emit are JSON objects; mosquitto's are not,
 # and a stray line can even parse as a bare JSON string. `fromjson? // empty`
 # and the type check quietly drop both rather than failing a query.
@@ -45,12 +50,15 @@ stream() {
 	else
 		docker compose logs --no-color "$@"
 	fi |
-		sed -E 's/^([^ |]+)[[:space:]]*\|[[:space:]]*\{/{"svc":"\1",/' |
+		fold_svc |
 		jq -Rc 'fromjson? // empty | select(type == "object")'
 }
 
 # Service names are padded to align; trimming makes the columns line up again.
 SVC='(.svc // "caddy") | sub("-[0-9]+$"; "") | .[0:10]'
+
+# Every field not already on the line, as key=value pairs.
+REST='del(.time, .level, .msg, .svc) | to_entries | map("\(.key)=\(.value)") | join(" ")'
 
 case "${1:-help}" in
 trace)
@@ -59,9 +67,7 @@ trace)
 	# that answers "what happened to this receipt".
 	stream | jq -r --arg id "$2" '
 		select((.trace // "") | startswith($id))
-		| "\(.time[11:19])  \('"$SVC"' | . + " " * (10 - length))  \(.msg)  \(
-			del(.time, .level, .msg, .svc, .trace) | to_entries
-			| map("\(.key)=\(.value)") | join(" "))"'
+		| "\(.time[11:19])  \('"$SVC"' | . + " " * (10 - length))  \(.msg)  \(del(.trace) | '"$REST"')"'
 	;;
 prints)
 	# The record of what has actually been sent to the paper: logged only
@@ -72,9 +78,7 @@ prints)
 	;;
 errors)
 	stream | jq -r 'select(.level == "WARN" or .level == "ERROR")
-		| "\(.time[11:19])  \(.level)  \('"$SVC"')  \(.msg)  \(
-			del(.time, .level, .msg, .svc) | to_entries
-			| map("\(.key)=\(.value)") | join(" "))"'
+		| "\(.time[11:19])  \(.level)  \('"$SVC"')  \(.msg)  \('"$REST"')"'
 	;;
 slow)
 	# A print legitimately takes about a second: it waits for the firmware's
@@ -107,17 +111,13 @@ caller)
 printer)
 	# The device's own account of itself, plus the jobs it acknowledged.
 	stream | jq -r 'select(.msg | test("device state|device ack|printer released|no acknowledgement|broker connection|connected to broker"))
-		| "\(.time[11:19])  \(.msg)  \(
-			del(.time, .level, .msg, .svc) | to_entries
-			| map("\(.key)=\(.value)") | join(" "))"'
+		| "\(.time[11:19])  \(.msg)  \('"$REST"')"'
 	;;
 tail)
 	docker compose logs --no-color -f --tail 20 |
-		sed -E 's/^([^ |]+)[[:space:]]*\|[[:space:]]*\{/{"svc":"\1",/' |
+		fold_svc |
 		jq -Rr 'fromjson? // empty
-			| "\(.time[11:19] // "        ")  \(.level // "INFO" | .[0:4])  \('"$SVC"')  \(.msg)  \(
-				del(.time, .level, .msg, .svc) | to_entries
-				| map("\(.key)=\(.value)") | join(" "))"'
+			| "\(.time[11:19] // "        ")  \(.level // "INFO" | .[0:4])  \('"$SVC"')  \(.msg)  \('"$REST"')"'
 	;;
 raw)
 	stream
