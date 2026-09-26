@@ -4,6 +4,7 @@ package logging
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -74,6 +75,22 @@ func New(format, level string) (*slog.Logger, error) {
 		return nil, fmt.Errorf("log format %q: want json or text", format)
 	}
 }
+
+// Flags are the two logging flags every service takes.
+type Flags struct {
+	format, level *string
+}
+
+// RegisterFlags adds -log-format and -log-level to the default flag set. Call
+// before flag.Parse, then Logger after it.
+func RegisterFlags() Flags {
+	return Flags{
+		format: flag.String("log-format", "json", "log format: json or text"),
+		level:  flag.String("log-level", "info", "log level: debug, info, warn or error"),
+	}
+}
+
+func (f Flags) Logger() (*slog.Logger, error) { return New(*f.format, *f.level) }
 
 // Wrap adds trace stamping to a handler built elsewhere, a test buffer mostly.
 // A logger that skips it works and silently never records a trace.

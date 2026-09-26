@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
@@ -400,7 +401,7 @@ func TestBodyTooLargeIsRejected(t *testing.T) {
 // status has to survive the trip, or the mapping above is meaningless.
 func TestClientPreservesUpstreamStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "printer is out of paper"})
+		httpx.WriteJSON(w, http.StatusConflict, map[string]string{"error": "printer is out of paper"})
 	}))
 	defer srv.Close()
 
@@ -421,7 +422,7 @@ func TestRendererClientPreservesPayloadBytes(t *testing.T) {
 	want := []byte{0x1b, '@', 0x00, 0xff, 'h', 'i'}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, renderResponse{Payload: want})
+		httpx.WriteJSON(w, http.StatusOK, renderResponse{Payload: want})
 	}))
 	defer srv.Close()
 

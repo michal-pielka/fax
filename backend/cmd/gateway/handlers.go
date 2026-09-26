@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
 	"github.com/michal-pielka/fax/server/internal/wire"
 )
@@ -47,7 +48,7 @@ func (a *api) routes() *http.ServeMux {
 
 	mux.HandleFunc("POST /api/print", a.print)
 	mux.HandleFunc("GET /api/state", a.state)
-	mux.HandleFunc("GET /api/health", a.health)
+	mux.HandleFunc("GET /api/health", httpx.Health)
 
 	return mux
 }
@@ -157,7 +158,7 @@ func (a *api) send(w http.ResponseWriter, r *http.Request, payload []byte, attrs
 
 	// 200: the printer took the bytes and answered with paper in. The id is
 	// the reference printed on the receipt and the trace in the logs.
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "printed"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"id": id, "status": "printed"})
 }
 
 // keep writes the picture to the photos directory under its trace id. A
@@ -180,11 +181,7 @@ func (a *api) state(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, st)
-}
-
-func (a *api) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
 // passThrough are statuses an internal service chose deliberately: 400 bad
@@ -209,12 +206,6 @@ func (a *api) upstreamFailed(w http.ResponseWriter, r *http.Request, service str
 	a.fail(w, r, http.StatusBadGateway, service+" is unavailable")
 }
 
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // fail writes an error response and records it. 4xx is the caller's fault and
 // routine, so it warns; 5xx is ours and errors.
 func (a *api) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {
@@ -226,5 +217,5 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, code int, msg string)
 	// The middleware's request line carries everything but the reason.
 	a.log.Log(r.Context(), level, "rejected", "reason", msg)
 
-	writeJSON(w, code, map[string]string{"error": msg})
+	httpx.WriteJSON(w, code, map[string]string{"error": msg})
 }

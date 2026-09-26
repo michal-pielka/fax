@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+
+	"github.com/michal-pielka/fax/server/internal/httpx"
 )
 
 // maxBody caps the request body. A text receipt is a few hundred bytes and a
@@ -23,7 +25,7 @@ func (a *api) routes() *http.ServeMux {
 	// be reachable from outside, since it publishes straight to the printer.
 	mux.HandleFunc("POST /internal/print", a.print)
 	mux.HandleFunc("GET /internal/state", a.state)
-	mux.HandleFunc("GET /internal/health", a.health)
+	mux.HandleFunc("GET /internal/health", httpx.Health)
 
 	return mux
 }
@@ -45,17 +47,17 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 
 	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
 		return
 	}
 
 	if req.ID == "" {
-		writeError(w, http.StatusBadRequest, "missing id")
+		httpx.WriteError(w, http.StatusBadRequest, "missing id")
 		return
 	}
 
 	if len(req.Payload) == 0 {
-		writeError(w, http.StatusBadRequest, "empty payload")
+		httpx.WriteError(w, http.StatusBadRequest, "empty payload")
 		return
 	}
 
@@ -68,45 +70,29 @@ func (a *api) print(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		// 200: the printer has the bytes and had paper when it took them.
 		// The paper itself is still moving for a few seconds after this.
-		writeJSON(w, http.StatusOK, map[string]string{"id": req.ID, "status": "printed"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"id": req.ID, "status": "printed"})
 
 	case errors.Is(err, ErrNoPaper), errors.Is(err, ErrBusy):
 		// Both describe the printer's current condition rather than a fault,
 		// and both become printable again on their own.
-		writeError(w, http.StatusConflict, err.Error())
+		httpx.WriteError(w, http.StatusConflict, err.Error())
 
 	case errors.Is(err, ErrOffline):
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		httpx.WriteError(w, http.StatusServiceUnavailable, err.Error())
 
 	case errors.Is(err, ErrNoConfirmation):
 		// The one status that means "unknown": the bytes went out and no
 		// answer came back in time. Not 500, since nothing here failed.
-		writeError(w, http.StatusGatewayTimeout, err.Error())
+		httpx.WriteError(w, http.StatusGatewayTimeout, err.Error())
 
 	default:
 		// Reaching the broker is the dispatcher's job, so failing to is the
 		// dispatcher's fault, not a statement about the printer.
 		a.log.ErrorContext(r.Context(), "publish failed", "err", err)
-		writeError(w, http.StatusServiceUnavailable, "cannot reach the broker")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "cannot reach the broker")
 	}
 }
 
 func (a *api) state(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.printer.State())
-}
-
-// health reports on the dispatcher, not the printer: an offline printer is
-// normal, and must not get this process restarted.
-func (a *api) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	httpx.WriteJSON(w, http.StatusOK, a.printer.State())
 }

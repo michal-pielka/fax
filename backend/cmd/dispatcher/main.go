@@ -4,15 +4,13 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
+	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
@@ -25,11 +23,10 @@ func main() {
 	clientID := flag.String("client-id", "fax-dispatcher", "MQTT client id")
 	username := flag.String("username", "backend", "MQTT username")
 	device := flag.String("device", "printer-1", "device id, used to build topic names")
-	logFormat := flag.String("log-format", "json", "log format: json or text")
-	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
+	logFlags := logging.RegisterFlags()
 	flag.Parse()
 
-	log, err := logging.New(*logFormat, *logLevel)
+	log, err := logFlags.Logger()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -59,7 +56,6 @@ func main() {
 		log.Error("cannot connect to broker", "broker", *broker, "err", err)
 		os.Exit(1)
 	}
-	defer dev.Close()
 
 	a := &api{printer: dev, log: log}
 
@@ -77,24 +73,11 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	err = httpx.Serve(srv, log, "broker", *broker, "device", *device)
+	dev.Close()
 
-	go func() {
-		log.Info("listening", "addr", srv.Addr, "broker", *broker, "device", *device)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("server failed", "err", err)
-			os.Exit(1)
-		}
-	}()
-
-	<-ctx.Done()
-	log.Info("shutting down")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Error("shutdown", "err", err)
+	if err != nil {
+		log.Error("server failed", "err", err)
+		os.Exit(1)
 	}
 }

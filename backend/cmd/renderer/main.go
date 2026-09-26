@@ -3,27 +3,23 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/michal-pielka/fax/server/internal/doc"
+	"github.com/michal-pielka/fax/server/internal/httpx"
 	"github.com/michal-pielka/fax/server/internal/logging"
 )
 
 func main() {
 	addr := flag.String("addr", ":8081", "listen address")
-	logFormat := flag.String("log-format", "json", "log format: json or text")
-	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
+	logFlags := logging.RegisterFlags()
 	flag.Parse()
 
-	log, err := logging.New(*logFormat, *logLevel)
+	log, err := logFlags.Logger()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -48,26 +44,8 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// Ctrl-C and SIGTERM stop accepting new connections and let in-flight
-	// requests finish.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	go func() {
-		log.Info("listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("server failed", "err", err)
-			os.Exit(1)
-		}
-	}()
-
-	<-ctx.Done()
-	log.Info("shutting down")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Error("shutdown", "err", err)
+	if err := httpx.Serve(srv, log); err != nil {
+		log.Error("server failed", "err", err)
+		os.Exit(1)
 	}
 }
