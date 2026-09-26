@@ -11,6 +11,7 @@
 ![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
 ![ESP32-S3](https://img.shields.io/badge/ESP32--S3-E7352C?logo=espressif&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <!-- TODO: hero video of a receipt coming out of the printer -->
 
@@ -138,6 +139,6 @@ The full deploy guide is in [`deploy/README.md`](deploy/README.md).
 
 *The paper is waiting.*
 
-<sub>Receipt font: <a href="https://fonts.google.com/specimen/VT323"><i>VT323</i></a> by Peter Hull, under the SIL Open Font License.</sub>
+<sub>Code under the <a href="LICENSE">MIT License</a>. Receipt font: <a href="https://fonts.google.com/specimen/VT323"><i>VT323</i></a> by Peter Hull, under the <a href="frontend/fonts/VT323-OFL.txt">SIL Open Font License</a>.</sub>
 
 </div>
