@@ -50,8 +50,10 @@ unsafe impl Sync for Usb {}
 /// Start the host and the client, and begin watching for the printer.
 pub fn open() -> Result<Usb, EspError> {
     unsafe {
-        let mut cfg = usb_host_config_t::default();
-        cfg.intr_flags = ESP_INTR_FLAG_LEVEL1 as _;
+        let cfg = usb_host_config_t {
+            intr_flags: ESP_INTR_FLAG_LEVEL1 as _,
+            ..Default::default()
+        };
         esp!(usb_host_install(&cfg))?;
 
         // The library's own event pump. Runs for the life of the program.
@@ -65,9 +67,11 @@ pub fn open() -> Result<Usb, EspError> {
         let (tx, rx) = mpsc::channel::<Plug>();
         let tx = Box::into_raw(Box::new(tx));
 
-        let mut ccfg = usb_host_client_config_t::default();
-        ccfg.is_synchronous = false;
-        ccfg.max_num_event_msg = 5;
+        let mut ccfg = usb_host_client_config_t {
+            is_synchronous: false,
+            max_num_event_msg: 5,
+            ..Default::default()
+        };
         ccfg.__bindgen_anon_1.async_.client_event_callback = Some(on_client_event);
         ccfg.__bindgen_anon_1.async_.callback_arg = tx as *mut c_void;
 
