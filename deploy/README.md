@@ -6,8 +6,26 @@ them to the GitHub Container Registry; the VPS pulls them.
 
 ## One-time setup on the VPS
 
-The repository is private, so the registry needs a login. Make a classic
-personal access token with only the `read:packages` scope, then:
+Secrets live in `.env` and the broker's password file, neither committed:
+
+```sh
+cp .env.example .env   # set MQTT_PASSWORD to something long
+
+# -c creates the file, so only on the first account.
+docker run --rm -v ./deploy/mosquitto:/m eclipse-mosquitto:2 \
+  mosquitto_passwd -c -b /m/passwd backend '<MQTT_PASSWORD from .env>'
+docker run --rm -v ./deploy/mosquitto:/m eclipse-mosquitto:2 \
+  mosquitto_passwd -b /m/passwd printer '<a different password>'
+```
+
+The printer password is the one compiled into the firmware. Keep it apart
+from the backend's: the ACL only lets `printer` receive jobs, never send
+them, and that is only worth something if the two accounts differ.
+
+GHCR packages are private unless made public in the package settings, even
+when the repository is public. For private packages, the VPS needs a login.
+Make a classic personal access token with only the `read:packages` scope,
+then:
 
 ```sh
 echo "<token>" | docker login ghcr.io -u michal-pielka --password-stdin
@@ -46,7 +64,7 @@ That is for development on a laptop; never pass `--build` on the VPS.
 ## The firmware
 
 Built for the ESP32-S3, which hosts the printer over its USB port; the
-classic ESP32 and the 9600 baud serial header are history (see the `usb-host`
+classic ESP32 and the 9600 baud serial header are history (see the `ttl-host`
 branch's log for why). Flashed through the board's COM port from a machine
 with the cable, never from the VPS:
 
