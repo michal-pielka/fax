@@ -10,11 +10,13 @@ mod wifi;
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::reset::restart;
 use esp_idf_svc::mqtt::client::{EspMqttClient, QoS};
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::EspError;
 
 use mqtt::Event;
+use printer::{Printer, Transport};
 
 fn main() -> Result<(), EspError> {
     // Required once, or some runtime patches fail to link.
@@ -33,7 +35,7 @@ fn main() -> Result<(), EspError> {
 
     // The printer, on the S3's USB port. It need not be there yet: jobs
     // wait for it, and it may come and go.
-    let printer = printer::Printer::new(usb::open()?);
+    let printer = Printer::new(usb::open()?);
 
     // Kept alive for the whole program: dropping it powers down the radio.
     let _wifi = wifi::connect(
@@ -56,47 +58,70 @@ fn main() -> Result<(), EspError> {
     while let Ok(event) = events.recv() {
         match event {
             Event::Connected => {
-                log::info!("connected to broker");
-
-                client.subscribe(config::JOB_TOPIC, QoS::AtLeastOnce)?;
-                client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, config::ONLINE)?;
-
-                log::info!("subscribed, announced online");
+                // Without the subscription the device would look online and
+                // never print. A reboot is the one reliable way back.
+                if let Err(e) = on_connect(&mut client) {
+                    log::error!("cannot subscribe after connecting: {e}; restarting");
+                    restart();
+                }
             }
 
+            // A failed job must not end the loop: returning from main leaves
+            // the board alive but deaf until someone power-cycles it.
             Event::Job { id, payload } => {
-                // Measured now, not cached: a browser is waiting on this ack,
-                // and a stale answer either refuses a job that would have
-                // printed or blasts bytes at an empty slot. Silence is not
-                // "no paper" -- see has_paper -- so an unanswered query prints.
-                if printer.has_paper() == Some(false) {
-                    log::warn!("job {id} refused, no paper");
-                    ack(&mut client, &id, config::ACK_NO_PAPER)?;
-                    continue;
-                }
-
-                log::info!("printing {} bytes for {id}", payload.len());
-
-                // Over USB the write returns only once the printer has taken
-                // every byte, which -- since it prints as its buffer drains --
-                // means the job is on paper. So a completed write is the
-                // confirmation; an error is a job that never reached paper:
-                // the printer off, unplugged, or stalled.
-                match printer.write(&payload) {
-                    Ok(()) => {
-                        log::info!("printed {id}");
-                        ack(&mut client, &id, config::ACK_OK)?;
-                    }
-                    Err(e) => {
-                        log::warn!("could not print {id}: {e}");
-                        ack(&mut client, &id, config::ACK_NO_CONFIRM)?;
-                    }
+                if let Err(e) = on_job(&mut client, &printer, &id, &payload) {
+                    log::error!("job {id} failed: {e}");
                 }
             }
         }
     }
 
+    log::error!("mqtt client gone; restarting");
+    restart();
+}
+
+fn on_connect(client: &mut EspMqttClient<'_>) -> Result<(), EspError> {
+    log::info!("connected to broker");
+
+    client.subscribe(config::JOB_TOPIC, QoS::AtLeastOnce)?;
+    client.publish(config::STATE_TOPIC, QoS::AtLeastOnce, true, config::ONLINE)?;
+
+    log::info!("subscribed, announced online");
+
     Ok(())
+}
+
+fn on_job<T: Transport>(
+    client: &mut EspMqttClient<'_>,
+    printer: &Printer<T>,
+    id: &str,
+    payload: &[u8],
+) -> Result<(), EspError> {
+    // Measured now, not cached: a browser is waiting on this ack, and a stale
+    // answer either refuses a job that would have printed or blasts bytes at
+    // an empty slot. Silence is not "no paper" -- see has_paper -- so an
+    // unanswered query prints.
+    if printer.has_paper() == Some(false) {
+        log::warn!("job {id} refused, no paper");
+        return ack(client, id, config::ACK_NO_PAPER);
+    }
+
+    log::info!("printing {} bytes for {id}", payload.len());
+
+    // Over USB the write returns only once the printer has taken every byte,
+    // which -- since it prints as its buffer drains -- means the job is on
+    // paper. So a completed write is the confirmation; an error is a job that
+    // never reached paper: the printer off, unplugged, or stalled.
+    match printer.write(payload) {
+        Ok(()) => {
+            log::info!("printed {id}");
+            ack(client, id, config::ACK_OK)
+        }
+        Err(e) => {
+            log::warn!("could not print {id}: {e}");
+            ack(client, id, config::ACK_NO_CONFIRM)
+        }
+    }
 }
 
 /// Publish the ack for one job. Not retained: a retained ack would be
