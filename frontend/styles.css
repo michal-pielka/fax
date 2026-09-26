@@ -1,8 +1,11 @@
-  /* The printer's own face, inlined as a data URI: nothing to install. */
+  /* VT323 (SIL OFL, see fonts/VT323-OFL.txt), subset to Latin. Scaled so one
+     character is 0.354em: the paper is measured in ch, and this keeps the
+     receipt the size its layout was tuned for. */
   @font-face {
     font-family: 'VT323';
     src: url('fonts/VT323.woff2') format('woff2');
     font-display: block;
+    size-adjust: 88.5%;
   }
 
   /* A deliberate single-theme page: a white receipt on a white table, where
