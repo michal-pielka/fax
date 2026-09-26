@@ -44,9 +44,11 @@ test('encodePNG writes a one-bit PNG that inflates to the same rows', async () =
   }
 });
 
-test('dither turns flat black into all zeros', () => {
+test('dither keeps a flat picture\'s tone', () => {
   const w = 16, h = 2;
-  assert.ok(dither(new Uint8ClampedArray(w * h * 4).fill(0), w, h).every(b => b === 0));
+  const flat = (v) => new Uint8ClampedArray(w * h * 4).fill(v);
+  assert.ok(dither(flat(255), w, h).every(b => b === 0xff), 'white stays white');
+  assert.ok(dither(flat(0), w, h).every(b => b === 0), 'black stays black');
 });
 
 test('unpack is the inverse of the packing', () => {

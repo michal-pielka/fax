@@ -29,7 +29,10 @@ export function dither(rgba, w, h) {
   for (; lo < 255 && acc + hist[lo] < n * 0.01; lo++) acc += hist[lo];
   acc = 0;
   for (; hi > lo && acc + hist[hi] < n * 0.01; hi--) acc += hist[hi];
-  const span = Math.max(1, hi - lo);
+  /* A flat picture has no range to stretch: stretching nothing to black and
+     white would print a blank white page solid black. */
+  if (hi - lo < 1) { lo = 0; hi = 255; }
+  const span = hi - lo;
 
   const stride = (w + 7) >> 3, bits = new Uint8Array(stride * h);
   for (let y = 0; y < h; y++) {
