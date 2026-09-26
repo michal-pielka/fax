@@ -122,6 +122,30 @@ func TestRequestsInventsATraceAtTheEdge(t *testing.T) {
 	}
 }
 
+// The gateway's trace becomes a filename and an MQTT topic segment, so the
+// internet must never get to pick it.
+func TestEdgeIgnoresAnIncomingTrace(t *testing.T) {
+	var seen string
+
+	h := Edge(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))(
+		http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			seen = Trace(r.Context())
+		}))
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set(TraceHeader, "../../#")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if seen == "" || seen == "../../#" {
+		t.Errorf("handler saw trace %q, want a freshly minted one", seen)
+	}
+
+	if got := rec.Header().Get(TraceHeader); got != seen {
+		t.Errorf("response header = %q, want %q", got, seen)
+	}
+}
+
 // ResponseController finds Flush only through Unwrap. Without it every event
 // stream dies on its first send.
 func TestRecorderStaysControllable(t *testing.T) {

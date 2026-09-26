@@ -97,8 +97,25 @@ func (f Flags) Logger() (*slog.Logger, error) { return New(*f.format, *f.level) 
 // A logger that skips it works and silently never records a trace.
 func Wrap(h slog.Handler) *slog.Logger { return slog.New(traceHandler{h}) }
 
+// Edge is Requests for the one service the internet can reach. An inbound id
+// is discarded, never reused: the trace becomes the job id, which names the
+// kept photo on disk and a segment of the MQTT topic, so a caller who could
+// choose it could write outside the photos directory or publish to a
+// wildcard topic.
+func Edge(log *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		inner := Requests(log)(next)
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Header.Del(TraceHeader)
+			inner.ServeHTTP(w, r)
+		})
+	}
+}
+
 // Requests gives every request a trace id and one line when it finishes.
-// Without it a rejection logged its reason and nothing else.
+// Without it a rejection logged its reason and nothing else. It trusts an
+// inbound id, so only internal services may use it; the edge uses Edge.
 func Requests(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

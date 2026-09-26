@@ -51,7 +51,8 @@ func main() {
 	srv := &http.Server{
 		Addr: *addr,
 		// Outermost, so a request that never reaches a handler is still logged.
-		Handler: logging.Requests(log)(a.routes()),
+		// Edge, not Requests: a caller must never choose the job id.
+		Handler: logging.Edge(log)(a.routes()),
 		// Without these one slow client holds a connection open forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

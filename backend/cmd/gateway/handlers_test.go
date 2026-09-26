@@ -94,7 +94,7 @@ func doAs(t *testing.T, a *api, method, path, contentType string, body io.Reader
 	}
 	// Wrapped exactly as main.go wraps it: the print handler takes its job id
 	// from the trace, so a bare routes() would hand the dispatcher an empty one.
-	h := logging.Requests(slog.New(slog.NewTextHandler(io.Discard, nil)))(a.routes())
+	h := logging.Edge(slog.New(slog.NewTextHandler(io.Discard, nil)))(a.routes())
 	h.ServeHTTP(rec, req)
 
 	return rec
@@ -305,8 +305,10 @@ func TestRejectionsAreLogged(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/print", strings.NewReader(`{"text":"Kraków"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-For", "203.0.113.9")
-	req.Header.Set(logging.TraceHeader, "trace-me")
-	logging.Requests(log)(a.routes()).ServeHTTP(httptest.NewRecorder(), req)
+	// Sent by the caller and ignored: the edge mints its own.
+	req.Header.Set(logging.TraceHeader, "../../etc/trace-me")
+	rec := httptest.NewRecorder()
+	logging.Edge(log)(a.routes()).ServeHTTP(rec, req)
 
 	out := buf.String()
 	want := []string{
@@ -320,9 +322,14 @@ func TestRejectionsAreLogged(t *testing.T) {
 		}
 	}
 
+	if strings.Contains(out, "trace-me") {
+		t.Errorf("the caller's trace id was used\ngot: %s", out)
+	}
+
 	// Two lines, one trace, or they cannot be joined up after the fact.
-	if n := strings.Count(out, `"trace":"trace-me"`); n != 2 {
-		t.Errorf("trace appears on %d lines, want 2\ngot: %s", n, out)
+	id := rec.Header().Get(logging.TraceHeader)
+	if n := strings.Count(out, `"trace":"`+id+`"`); id == "" || n != 2 {
+		t.Errorf("trace %q appears on %d lines, want 2\ngot: %s", id, n, out)
 	}
 }
 
