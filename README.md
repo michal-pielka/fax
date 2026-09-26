@@ -23,9 +23,9 @@
 <br>
 
 > [!TIP]
-> **Go print me something at [fax.pielka.sh](https://fax.pielka.sh).**
-> A hello, a beer invitation, a selfie. It comes out in my flat a few seconds later,
-> and I read every one. 🧾
+> **Go print me something at [fax.pielka.sh](https://fax.pielka.sh).**\
+> A hello, a beer invitation, a selfie.\
+> It comes out in my flat a few seconds later, and I read every one.
 
 ## What it is
 
@@ -95,6 +95,14 @@ deploy/     Caddy, Mosquitto, deploy and log scripts
 <details>
 <summary><b>Run your own</b></summary>
 <br>
+
+> The domain is hardcoded. Replace `fax.pielka.sh` with yours in:
+>
+> - `deploy/Caddyfile`: the site address; Caddy gets its certificate for it
+> - `docker-compose.yml`: `SITE_ADDRESS`
+> - `firmware/src/config.rs`: `MQTT_URL`, where the board connects
+> - `frontend/index.html` and `backend/internal/render/render.go`: the name
+>   printed on the receipt
 
 **Server** (Docker with Compose):
 
