@@ -28,9 +28,12 @@ if ! git diff --quiet "$before" "$after" -- deploy/mosquitto/; then
 	docker compose restart mosquitto
 fi
 
+# A restart, not `caddy reload`: git replaces the file rather than editing
+# it, and a single-file bind mount keeps showing the old one until the
+# container restarts.
 if ! git diff --quiet "$before" "$after" -- deploy/Caddyfile; then
-	echo "Caddyfile changed; reloading caddy"
-	docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+	echo "Caddyfile changed; restarting caddy"
+	docker compose restart caddy
 fi
 
 docker compose ps --format "table {{.Service}}\t{{.Status}}\t{{.Image}}"
