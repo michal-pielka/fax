@@ -46,6 +46,35 @@ It pulls the checkout (frontend, Caddyfile and Mosquitto config are mounted
 from it, not baked into images), pulls the images, restarts what changed,
 and restarts Mosquitto or reloads Caddy only if their config changed.
 
+## The wall at /prints
+
+Every print the printer confirms is appended to `prints.jsonl` in the `wall`
+volume and pushed live to anyone watching `/prints`. Refused or unconfirmed
+prints never appear.
+
+Take one down (the id is in its link, `/prints#<id>`):
+
+```sh
+./deploy/hide.sh <id>
+```
+
+Backfilling old prints reads the gateway's logs. Docker keeps logs per
+container, and a deploy that pulls a new gateway image replaces the
+container, so save them first:
+
+```sh
+docker compose logs --no-color gateway > ~/gateway-logs.txt   # before update.sh
+./deploy/update.sh
+docker compose stop gateway
+docker compose run --rm -T --no-deps gateway \
+  -wall-dir=/var/lib/fax/wall -photos-dir=/var/lib/fax/photos -backfill < ~/gateway-logs.txt
+docker compose start gateway
+```
+
+The gateway is stopped because backfill rewrites the file it appends to.
+Logs carry no styles, so backfilled text comes back plain. A photo is
+included only if its log line survived. Running it twice adds nothing twice.
+
 ## Rolling back
 
 Every image is also tagged with the commit that built it:
