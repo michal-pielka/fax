@@ -46,11 +46,15 @@ services:
       - "-renderer=http://renderer:8081"
       - "-dispatcher=http://dispatcher:8082"
       - "-photos-dir=/var/lib/fax/photos"
+      - "-wall-dir=/var/lib/fax/wall"
     # A copy of every printed photo, the way printed text is in the logs.
     # Not rotated: a square photo is under 20 KB, so a full volume is months
     # of strangers away, and it is the only record of what came out.
+    # The wall at /prints: every print, one JSON line each, and the ids
+    # taken down with deploy/hide.sh.
     volumes:
       - photos:/var/lib/fax/photos
+      - wall:/var/lib/fax/wall
     depends_on: [renderer, dispatcher]
 
   renderer:
@@ -97,3 +101,4 @@ volumes:
   caddy-data:
   mosquitto-data:
   photos:
+  wall:
