@@ -25,6 +25,8 @@ fax.pielka.sh {
 
 	handle {
 		root * /srv/web
+		# Clean page URLs: /prints serves prints.html.
+		try_files {path} {path}.html
 		file_server
 	}
 }

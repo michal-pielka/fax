@@ -1,0 +1,107 @@
+  /* The wall at /prints: the receipts from styles.css, laid out on one big
+     table that is moved and zoomed as a whole. */
+
+  .wall-page {
+    display: block;
+    height: 100vh;
+    height: 100svh;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .wall-page::before { content: none; }
+
+  .wall-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: max(1rem, env(safe-area-inset-top)) 1.4rem 1rem;
+    font-size: clamp(15px, 1.6vw, 18px);
+    color: var(--ink-dim);
+    /* The table's own colour, fading out, so receipts pass under it. */
+    background: linear-gradient(#f5f4f2f0, #f5f4f200);
+    pointer-events: none;
+  }
+
+  .wall-bar a { color: var(--ink); text-decoration: none; pointer-events: auto; }
+  .wall-bar a:hover { text-decoration: underline; }
+
+  .viewport {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    cursor: grab;
+    outline: none;
+  }
+
+  .viewport.grabbing { cursor: grabbing; }
+
+  .world {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    display: grid;
+    grid-template-columns: repeat(var(--wall-cols, 8), max-content);
+    align-items: start;
+    gap: 64px;
+    padding: 64px;
+  }
+
+  /* Only while moving: a layer that stays promoted is scaled as a bitmap and
+     turns blurry, so it is dropped again once the wall is still. */
+  .world.moving { will-change: transform; }
+
+  /* One soft shadow, not the page's four: there may be thousands of these.
+     Off-screen receipts are skipped entirely until they come into view. */
+  .world .roll {
+    filter: drop-shadow(0 0 10px rgb(var(--shade) / 0.13));
+    content-visibility: auto;
+    contain-intrinsic-size: auto 420px auto 560px;
+    cursor: pointer;
+  }
+
+  /* Zoomed far out, shadows and torn edges are invisible and only cost. */
+  .world.far .roll { filter: none; }
+  .world.far .paper { -webkit-mask-image: none; mask-image: none; }
+
+  .world .roll.fresh { animation: fresh 1.4s ease-out; }
+  @keyframes fresh { from { opacity: 0; transform: translateY(-48px); } }
+
+  .wall-new {
+    position: fixed;
+    bottom: max(1.5rem, env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    padding: 0.6em 1.2em;
+    border: 1px solid var(--ink);
+    border-radius: 999px;
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    font-size: clamp(15px, 1.6vw, 18px);
+    cursor: pointer;
+  }
+
+  .wall-new:hover { background: var(--ink); color: var(--paper); }
+
+  .wall-page .status { position: fixed; inset: 0; pointer-events: none; }
+
+  .detail-meta {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    margin: 0;
+    text-align: center;
+    font-size: clamp(15px, 1.6vw, 18px);
+    color: var(--ink-dim);
+  }

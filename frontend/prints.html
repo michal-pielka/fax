@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAX - every print</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/prints.css">
+</head>
+<body class="wall-page">
+
+<header class="wall-bar">
+  <a href="/">FAX</a>
+  <span id="count"></span>
+  <a href="/">PRINT YOURS</a>
+</header>
+
+<!-- Every print ever, laid out as one table of receipts. Drag to move,
+     scroll or pinch to zoom, click one to read it. -->
+<div class="viewport" id="viewport" tabindex="0"
+     aria-label="Every print. Drag to move, scroll or pinch to zoom, click a receipt to open it.">
+  <div class="world" id="world"></div>
+</div>
+
+<button class="wall-new" id="fresh" hidden>NEW PRINT</button>
+<div class="status" id="status" role="status" aria-live="polite"></div>
+
+<!-- Must match the receipt in index.html, which matches what prints. -->
+<template id="receipt">
+  <div class="roll">
+    <div class="paper">
+      <div class="zone fixed">
+        <div class="big">FAX</div>
+        <div>THE SLOWEST SOCIAL NETWORK</div>
+      </div>
+      <div class="divider"></div>
+      <div class="zone body"><pre class="mirror"></pre></div>
+      <div class="divider"></div>
+      <div class="zone fixed">
+        <div>COMMITTED TO PHYSICAL MEDIA</div>
+        <div>*** fax.pielka.sh ***</div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- One print, full size, on the same table as the help receipt. -->
+<dialog class="about detail" id="detail" aria-label="A print">
+  <div class="sheet" id="detailSheet"></div>
+  <p class="detail-meta" id="detailMeta"></p>
+  <button class="help back" id="detailBack" aria-label="Back">&lt;</button>
+</dialog>
+
+<script type="module" src="/prints.js"></script>
+</body>
+</html>
