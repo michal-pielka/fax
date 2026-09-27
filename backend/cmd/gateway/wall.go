@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -294,4 +296,111 @@ func readLines(path string) ([]string, error) {
 	}
 
 	return lines, nil
+}
+
+// Backfill adds the prints found in gateway logs to the wall kept in dir and
+// returns how many were new. It reads the "printed" lines the gateway logs
+// after every print, from `docker compose logs` or raw. Those carry no
+// styles, so old receipts come back plain. A photo is added only if its
+// picture was kept in photos. Run it with the gateway stopped: it rewrites
+// the file the gateway appends to.
+func Backfill(dir, photos string, logs io.Reader) (int, error) {
+	path := filepath.Join(dir, printsFile)
+
+	prints, err := readPrints(path)
+	if err != nil {
+		return 0, err
+	}
+
+	seen := map[string]bool{}
+	for _, p := range prints {
+		seen[p.ID] = true
+	}
+
+	added := 0
+	sc := bufio.NewScanner(logs)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		p, ok := printedLine(sc.Bytes())
+		if !ok || seen[p.ID] {
+			continue
+		}
+		if p.Kind == "photo" {
+			if _, err := os.Stat(filepath.Join(photos, p.ID+".png")); err != nil {
+				continue
+			}
+		}
+
+		seen[p.ID] = true
+		prints = append(prints, p)
+		added++
+	}
+	if err := sc.Err(); err != nil {
+		return 0, err
+	}
+
+	slices.SortStableFunc(prints, func(a, b Print) int { return a.Time.Compare(b.Time) })
+
+	return added, writePrints(path, prints)
+}
+
+// printedLine reads one gateway log line, with or without the service name
+// docker compose puts in front, into a print if it records one.
+func printedLine(line []byte) (Print, bool) {
+	i := bytes.IndexByte(line, '{')
+	if i < 0 {
+		return Print{}, false
+	}
+
+	var l struct {
+		Time  time.Time `json:"time"`
+		Msg   string    `json:"msg"`
+		Trace string    `json:"trace"`
+		Kind  string    `json:"kind"`
+		Text  string    `json:"text"`
+		Rows  int       `json:"rows"`
+	}
+	if json.Unmarshal(line[i:], &l) != nil || l.Msg != "printed" || l.Trace == "" {
+		return Print{}, false
+	}
+
+	p := Print{ID: l.Trace, Time: l.Time, Kind: l.Kind, Text: l.Text, Rows: l.Rows}
+	if p.Kind == "" {
+		// Lines from before photos existed were all text.
+		p.Kind = "text"
+	}
+
+	return p, p.Kind == "photo" || p.Text != ""
+}
+
+// writePrints replaces the file whole, through a rename, so a failure leaves
+// the old one rather than half of the new.
+func writePrints(path string, prints []Print) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), printsFile+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	bw := bufio.NewWriter(tmp)
+	enc := json.NewEncoder(bw)
+	for _, p := range prints {
+		if err := enc.Encode(p); err != nil {
+			tmp.Close()
+			return err
+		}
+	}
+	if err := bw.Flush(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmp.Name(), path)
 }

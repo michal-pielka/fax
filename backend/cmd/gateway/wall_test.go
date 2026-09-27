@@ -141,6 +141,40 @@ func TestDisconnectEndsEveryStream(t *testing.T) {
 	}
 }
 
+func TestBackfill(t *testing.T) {
+	dir, photos := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(photos, "p1.png"), []byte("png"), 0o644)
+
+	// Already on the wall: must not be doubled.
+	w := openWall(t, dir)
+	w.Add(textPrint("t2", 20))
+
+	logs := strings.Join([]string{
+		`gateway-1  | {"time":"1970-01-01T00:00:30Z","level":"INFO","msg":"printed","trace":"p1","kind":"photo","rows":100}`,
+		`gateway-1  | {"time":"1970-01-01T00:00:10Z","level":"INFO","msg":"printed","trace":"t1","text":"old, no kind"}`,
+		`gateway-1  | {"time":"1970-01-01T00:00:20Z","level":"INFO","msg":"printed","trace":"t2","kind":"text","text":"dup"}`,
+		`gateway-1  | {"time":"1970-01-01T00:00:40Z","level":"INFO","msg":"printed","trace":"p2","kind":"photo","rows":5}`,
+		`gateway-1  | {"time":"1970-01-01T00:00:50Z","level":"INFO","msg":"request","trace":"x","path":"/api/print"}`,
+		`mosquitto-1  | 1790000000: New connection`,
+	}, "\n")
+
+	n, err := Backfill(dir, photos, strings.NewReader(logs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("added %d, want 2 (t1 and p1; p2 has no picture)", n)
+	}
+
+	page, _, _ := openWall(t, dir).Page("", 10)
+	if got := ids(page); got != "p1,t2,t1" {
+		t.Errorf("wall = %s, want p1,t2,t1", got)
+	}
+	if page[2].Kind != "text" || page[2].Text != "old, no kind" {
+		t.Errorf("old line read as %+v", page[2])
+	}
+}
+
 func TestOnlyConfirmedPrintsGoOnTheWall(t *testing.T) {
 	a := newAPI(&fakeRenderer{payload: []byte("x")}, &fakeDispatcher{})
 	body := `{"text":"hello","spans":[{"start":0,"end":5,"style":{"bold":true}}]}`

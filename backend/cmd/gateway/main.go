@@ -24,6 +24,7 @@ func main() {
 	dispatcherURL := flag.String("dispatcher", "http://localhost:8082", "dispatcher service base URL")
 	photosDir := flag.String("photos-dir", "", "keep a copy of every printed photo here; empty keeps none")
 	wallDir := flag.String("wall-dir", "", "keep the public record of prints here; empty keeps it in memory")
+	backfill := flag.Bool("backfill", false, "add the prints in gateway logs read from stdin to -wall-dir, then exit")
 	logFlags := logging.RegisterFlags()
 	flag.Parse()
 
@@ -31,6 +32,23 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+
+	if *backfill {
+		if *wallDir == "" {
+			log.Error("-backfill needs -wall-dir")
+			os.Exit(1)
+		}
+
+		n, err := Backfill(*wallDir, *photosDir, os.Stdin)
+		if err != nil {
+			log.Error("backfill failed", "err", err)
+			os.Exit(1)
+		}
+
+		log.Info("backfilled", "prints", n)
+
+		return
 	}
 
 	wall, err := OpenWall(*wallDir)
