@@ -363,6 +363,29 @@
   }
 
   .help:hover { background: var(--ink); color: var(--paper); }
+
+  /* The way to the wall at /prints, mirroring the question: same line, same
+     height, the opposite corner. */
+  .prints-link {
+    position: fixed;
+    top: max(1.4rem, env(safe-area-inset-top));
+    left: max(1.4rem, env(safe-area-inset-left));
+    z-index: 10;
+    display: inline-flex;
+    align-items: center;
+    height: 2.2em;
+    padding: 0 0.9em;
+    border: 1px solid var(--ink);
+    border-radius: 1.1em;
+    color: var(--ink);
+    font-size: clamp(15px, 1.6vw, 18px);
+    line-height: 1;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .prints-link:hover { background: var(--ink); color: var(--paper); }
+  .prints-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   /* While the answer is showing, the question gives its corner to the way
      back: same circle, same place, a different glyph. */
   body:has(.about[open]) #help { visibility: hidden; }
