@@ -65,10 +65,12 @@ func (f *fakeDispatcher) State(context.Context) (State, error) {
 
 func newAPI(r Renderer, d Dispatcher) *api {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wall, _ := OpenWall("") // in memory: cannot fail
 
 	return &api{
 		renderer:   r,
 		dispatcher: d,
+		wall:       wall,
 		log:        log,
 	}
 }

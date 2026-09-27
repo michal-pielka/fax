@@ -23,12 +23,19 @@ func main() {
 	rendererURL := flag.String("renderer", "http://localhost:8081", "renderer service base URL")
 	dispatcherURL := flag.String("dispatcher", "http://localhost:8082", "dispatcher service base URL")
 	photosDir := flag.String("photos-dir", "", "keep a copy of every printed photo here; empty keeps none")
+	wallDir := flag.String("wall-dir", "", "keep the public record of prints here; empty keeps it in memory")
 	logFlags := logging.RegisterFlags()
 	flag.Parse()
 
 	log, err := logFlags.Logger()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	wall, err := OpenWall(*wallDir)
+	if err != nil {
+		log.Error("cannot open the wall", "path", *wallDir, "err", err)
 		os.Exit(1)
 	}
 
@@ -45,6 +52,7 @@ func main() {
 		renderer:   NewRendererClient(*rendererURL, &http.Client{Timeout: renderTimeout}),
 		dispatcher: NewDispatcherClient(*dispatcherURL, &http.Client{}),
 		photos:     *photosDir,
+		wall:       wall,
 		log:        log,
 	}
 
@@ -60,6 +68,9 @@ func main() {
 		WriteTimeout: timeouts.Write,
 		IdleTimeout:  60 * time.Second,
 	}
+
+	// Live streams never end on their own, so shutdown has to end them.
+	srv.RegisterOnShutdown(wall.Disconnect)
 
 	if err := httpx.Serve(srv, log, "renderer", *rendererURL, "dispatcher", *dispatcherURL); err != nil {
 		log.Error("server failed", "err", err)
