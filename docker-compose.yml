@@ -26,6 +26,7 @@ services:
       - "443:443"
     environment:
       SITE_ADDRESS: "fax.pielka.sh"
+      FAX_BANNED: "${FAX_BANNED:-}"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./frontend:/srv/web:ro

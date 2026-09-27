@@ -8,6 +8,13 @@ fax.pielka.sh {
 		format json
 	}
 
+	# FAX_BANNED from .env: space-separated IPs or CIDR ranges. Their
+	# connections are closed with no response. Empty bans nobody.
+	@banned remote_ip {$FAX_BANNED}
+	handle @banned {
+		abort
+	}
+
 	handle /mqtt* {
 		reverse_proxy mosquitto:9001
 	}
