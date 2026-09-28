@@ -59,7 +59,6 @@
     z-index: 5;
     padding: 0.6em 1.2em;
     border: 1px solid var(--ink);
-    border-radius: 999px;
     background: var(--paper);
     color: var(--ink);
     font: inherit;

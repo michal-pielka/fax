@@ -293,7 +293,7 @@
   .keys button:hover { color: var(--ink-dim); }
   .keys button[aria-pressed="true"] { color: var(--ink); }
   .keys button[aria-pressed="true"]::before { content: "\25CF"; }  /* filled */
-  .keys button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+  .keys button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
   /* With a photo on the paper the style keys have nothing to style; the one
      key left is the way back to words. */
@@ -351,7 +351,6 @@
     height: 2.2em;
     padding: 0;
     border: 1px solid var(--ink);
-    border-radius: 50%;
     background: transparent;
     /* The ink the receipts are written in, nothing lighter. */
     color: var(--ink);
@@ -376,7 +375,6 @@
     height: 2.2em;
     padding: 0 0.9em;
     border: 1px solid var(--ink);
-    border-radius: 1.1em;
     color: var(--ink);
     font-size: clamp(15px, 1.6vw, 18px);
     line-height: 1;
@@ -387,7 +385,7 @@
   .prints-link:hover { background: var(--ink); color: var(--paper); }
   .prints-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   /* While the answer is showing, the question gives its corner to the way
-     back: same circle, same place, a different glyph. */
+     back: same square, same place, a different glyph. */
   body:has(.about[open]) #help { visibility: hidden; }
   .help:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
