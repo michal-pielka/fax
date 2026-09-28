@@ -7,7 +7,7 @@
 
 import { fillReceipt } from './js/receipt.js';
 import { layout, drawReceipt, receiptHeight, MARGIN } from './js/tile.js';
-import { zoomAt, fitBox, columnsFor, slotAt, visibleSlots, slotUnder } from './js/view.js';
+import { clamp, zoomAt, fitBox, columnsFor, slotAt, visibleSlots, slotUnder } from './js/view.js';
 
 const root = getComputedStyle(document.documentElement);
 const css = (name) => root.getPropertyValue(name).trim();
@@ -185,11 +185,24 @@ addEventListener('resize', sizeCanvas);
 
 function zoom(cx, cy, k) {
   view = zoomAt(view, cx, cy, k, minScale, MAX_SCALE);
+  clampView();
   redraw();
 }
 
 function wallSize() {
   return [grid.pad * 2 + cols * grid.pitchX - GAP, grid.pad * 2 + rowCount() * grid.pitchY - GAP];
+}
+
+/* A drag can never lose the wall: a strip of it always stays on screen.
+   Applied to the hand-driven moves only, not to the scripted flights. */
+const SLACK = 120;
+function clampView() {
+  const [w, h] = wallSize();
+  view = {
+    ...view,
+    x: clamp(view.x, SLACK - w * view.s, innerWidth - SLACK),
+    y: clamp(view.y, SLACK - h * view.s, innerHeight - SLACK),
+  };
 }
 
 function fitAll() {
@@ -251,6 +264,7 @@ viewport.addEventListener('pointermove', (e) => {
   }
 
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  clampView();
   redraw();
 });
 
@@ -280,7 +294,7 @@ viewport.addEventListener('keydown', (e) => {
   if (e.key === '+' || e.key === '=') zoom(...c, 1.25);
   else if (e.key === '-') zoom(...c, 0.8);
   else if (e.key === '0') fitAll();
-  else if (pan) { view = { ...view, x: view.x + pan[0], y: view.y + pan[1] }; redraw(); }
+  else if (pan) { view = { ...view, x: view.x + pan[0], y: view.y + pan[1] }; clampView(); redraw(); }
   else return;
   e.preventDefault();
 });
