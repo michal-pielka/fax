@@ -10,17 +10,6 @@ export function rowsOf(text, cols) {
   return rows;
 }
 
-/* The length of every printed row: each line hard-wrapped at `cols`, as
-   the printer does. The zoomed-out wall draws a text as these bars. */
-export function rowLengths(text, cols) {
-  const rows = [];
-  for (const line of text.split('\n')) {
-    if (!line.length) { rows.push(0); continue; }
-    for (let i = 0; i < line.length; i += cols) rows.push(Math.min(cols, line.length - i));
-  }
-  return rows;
-}
-
 /* Every printed row as [start, end) offsets into the text: each line
    hard-wrapped at `cols`, as the printer does. The wall draws text by these. */
 export function rowRanges(text, cols) {

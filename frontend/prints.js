@@ -1,105 +1,113 @@
 /* The wall: every print, oldest first, on one table you pan and zoom, with
-   new ones arriving live. Close up, the receipts are the preview's own
-   markup, so a print looks here as it did to whoever sent it. Far out, one
-   canvas draws them as sketches instead. Either way only what is on screen
-   is drawn, so the wall costs the same with ten prints or ten thousand. */
+   new ones arriving live. One canvas draws it all. Each receipt is drawn
+   once per size into its own small canvas, a tile, and every frame paints
+   the tiles on screen at the size closest to the zoom, so detail fades out
+   gradually as you zoom away and the wall costs the same with ten prints
+   or ten thousand. */
 
 import { fillReceipt } from './js/receipt.js';
-import { rowLengths } from './js/paper.js';
+import { layout, drawReceipt, receiptHeight, MARGIN } from './js/tile.js';
 import { zoomAt, fitBox, columnsFor, slotAt, visibleSlots, slotUnder } from './js/view.js';
 
-const cssInt = (name) => parseInt(getComputedStyle(document.documentElement).getPropertyValue(name), 10);
-const COLS = cssInt('--cols');
+const root = getComputedStyle(document.documentElement);
+const css = (name) => root.getPropertyValue(name).trim();
+const COLS = parseInt(css('--cols'), 10), ROWS = parseInt(css('--rows'), 10);
 const $ = (id) => document.getElementById(id);
-const viewport = $('viewport'), world = $('world'), sketch = $('sketch'), tpl = $('receipt');
+const viewport = $('viewport'), canvas = $('wall'), tpl = $('receipt');
 const detail = $('detail'), detailSheet = $('detailSheet'), detailMeta = $('detailMeta');
 const fresh = $('fresh'), count = $('count'), status = $('status');
-const ctx = sketch.getContext('2d');
+const ctx = canvas.getContext('2d');
 
+/* The receipt's type size on the wall: fixed, so the layout never depends
+   on the window. The page's own maximum, so zoom 1 is the real thing. */
+const FONT_SIZE = 31;
+const FONT = 'VT323';
+const GAP = 64;
 /* Past this the text is larger than on the real page, and no clearer. */
 const MAX_SCALE = 1.5;
-/* From here up real receipts are shown; below, the canvas sketches. */
-const DETAIL_SCALE = 0.3;
-/* A sketch this many pixels wide or more shows its photo. */
-const THUMB_WIDTH = 24;
-const GAP = 64;
-/* A photo's width in printer dots: its height is in the same unit. */
-const DOTS = 384;
-/* Receipts kept built after scrolling away, so coming back is instant. */
-const CACHE = 300;
-/* Receipts built per frame: zooming in past DETAIL_SCALE wants dozens at
-   once, and building them all in one frame stalls it. The rest stay
-   sketched until their turn. */
-const BUILD_PER_FRAME = 12;
+/* Tile sizes, each half the next. A frame uses the smallest one that is at
+   least as sharp as the screen needs. */
+const LEVELS = [1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4];
+/* Milliseconds a frame may spend drawing new tiles; the rest wait for the
+   next frame, shown meanwhile at whatever size is at hand. */
+const FRAME_BUDGET = 6;
+/* Pixels of tiles kept, about 100 MB. The least recently used go first. */
+const PIXEL_BUDGET = 24e6;
+const FADE_MS = 600;
+
+const colors = {
+  paper: css('--paper'), ink: css('--ink'), dim: css('--ink-dim'), ghost: css('--ink-ghost'),
+  shadow: `rgb(${css('--shade')} / 0.13)`,
+};
 
 const prints = [];      // oldest first
 const index = new Map(); // id -> position in prints
-const built = new Map(); // id -> receipt element, on the wall or cached
-const shown = new Set(); // ids whose receipt is on the wall now
-const thumbs = new Map(); // id -> Image, for the sketches
+const tiles = new Map(); // `${id}@${level}` -> canvas, oldest use first
+const photos = new Map(); // id -> Image
+const arrivedAt = new Map(); // id -> time it came in live, for the fade
+let tilePixels = 0;
 let view = { x: 0, y: 0, s: 1 };
 let minScale = 0.05;
 let cols = 1;
-let geo = null; // the receipt's measurements, see measure()
+let L = null; // the receipt's layout, see js/tile.js
+let grid = null; // slot spacing for js/view.js
 
 const photoURL = (p) => `/api/prints/${encodeURIComponent(p.id)}/photo`;
-
-function receipt(print, lazy = true) {
-  const el = tpl.content.firstElementChild.cloneNode(true);
-  fillReceipt(el, print, COLS, photoURL(print), lazy);
-  return el;
-}
-
-/* ---- the receipt, measured once ---------------------------------------- */
-
-/* Everything the grid and the sketches need, read off one real receipt: its
-   size, where its body is, and a bar for every line of its frame. Footer
-   bars are measured from the body's bottom, which a photo pushes down. */
-function measure() {
-  const el = receipt({ id: '', kind: 'text', text: 'x' });
-  world.append(el);
-  const r = el.getBoundingClientRect();
-  const body = el.querySelector('.body').getBoundingClientRect();
-  const bodyBottom = body.bottom - r.top;
-
-  const bar = (node, dy) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const t = range.getBoundingClientRect();
-    return { x: t.left - r.left, y: t.top - r.top - dy, w: t.width, h: t.height, color: getComputedStyle(node).color };
-  };
-  const [head, foot] = [...el.querySelectorAll('.fixed')];
-  const [divTop, divBot] = [...el.querySelectorAll('.divider')];
-
-  const g = {
-    w: r.width,
-    h: r.height,
-    bodyX: body.left - r.left,
-    bodyY: body.top - r.top,
-    bodyW: body.width,
-    bodyH: body.height,
-    lineH: body.height / cssInt('--rows'),
-    ink: getComputedStyle(el.querySelector('.mirror')).color,
-    head: [...head.children, divTop].map((n) => bar(n, 0)),
-    foot: [divBot, ...foot.children].map((n) => bar(n, bodyBottom)),
-  };
-  el.remove();
-
-  g.pad = GAP;
-  g.pitchX = g.w + GAP;
-  // Every slot is as tall as the tallest receipt, a square photo.
-  g.pitchY = g.h - g.bodyH + g.bodyW + GAP;
-  return g;
-}
-
-const bodyHeight = (p) => (p.kind === 'photo' ? (geo.bodyW * p.rows) / DOTS : geo.bodyH);
-const heightOf = (p) => geo.h - geo.bodyH + bodyHeight(p);
+const heightOf = (p) => receiptHeight(L, p);
 const rowCount = () => Math.max(1, Math.ceil(prints.length / cols));
-const boxOf = (i) => [...slotAt(i, cols, geo), geo.w, heightOf(prints[i])];
+const boxOf = (i) => [...slotAt(i, cols, grid), L.w, heightOf(prints[i])];
+
+/* ---- tiles --------------------------------------------------------------- */
+
+function photoOf(p) {
+  if (p.kind !== 'photo') return null;
+  let img = photos.get(p.id);
+  if (!img) {
+    img = new Image();
+    // Tiles drawn before the picture arrived show a blank; redraw them.
+    img.onload = () => { dropTiles(p.id); redraw(); };
+    img.src = photoURL(p);
+    photos.set(p.id, img);
+  }
+  return img;
+}
+
+function makeTile(p, k) {
+  const t = document.createElement('canvas');
+  t.width = Math.ceil((L.w + 2 * MARGIN) * k);
+  t.height = Math.ceil((heightOf(p) + 2 * MARGIN) * k);
+  const c = t.getContext('2d');
+  c.setTransform(k, 0, 0, k, MARGIN * k, MARGIN * k);
+  drawReceipt(c, L, p, k, colors, photoOf(p));
+
+  const key = `${p.id}@${k}`;
+  tiles.set(key, t);
+  tilePixels += t.width * t.height;
+  for (const [old, o] of tiles) {
+    if (tilePixels <= PIXEL_BUDGET || old === key) break;
+    tiles.delete(old);
+    tilePixels -= o.width * o.height;
+  }
+  return t;
+}
+
+/* A tile of p at level k if one exists, marked as just used. */
+function tileAt(p, k) {
+  const key = `${p.id}@${k}`, t = tiles.get(key);
+  if (t) { tiles.delete(key); tiles.set(key, t); }
+  return t;
+}
+
+function dropTiles(id) {
+  for (const k of LEVELS) {
+    const key = `${id}@${k}`, t = tiles.get(key);
+    if (t) { tiles.delete(key); tilePixels -= t.width * t.height; }
+  }
+}
 
 /* ---- drawing ------------------------------------------------------------- */
 
-let queued = false, settle = 0;
+let queued = false;
 
 /* Everything that moves the camera or changes the wall asks for a frame;
    however many ask, it is drawn once. */
@@ -109,149 +117,69 @@ function redraw() {
   requestAnimationFrame(draw);
 }
 
-function draw() {
+function draw(now) {
   queued = false;
-  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
-
-  const slots = visibleSlots(view, innerWidth, innerHeight, cols, rowCount(), geo, 1);
-  if (view.s >= DETAIL_SCALE) {
-    const behind = showReceipts(slots);
-    paintSketches(slots, (id) => shown.has(id));
-    if (behind) redraw();
-  } else {
-    showReceipts(null);
-    paintSketches(slots);
-  }
-
-  // Promoted only while moving: a layer that stays promoted is scaled as
-  // a bitmap and turns blurry.
-  world.classList.add('moving');
-  clearTimeout(settle);
-  settle = setTimeout(() => world.classList.remove('moving'), 200);
-}
-
-function* indicesIn({ c0, c1, r0, r1 }) {
-  for (let r = r0; r <= r1; r++) {
-    for (let c = c0; c <= c1; c++) {
-      const i = r * cols + c;
-      if (i < prints.length) yield i;
-    }
-  }
-}
-
-/* Put the receipts in `slots` on the wall and take every other one off.
-   null takes them all off. True if some are still waiting to be built. */
-function showReceipts(slots) {
-  const want = new Set();
-  let budget = BUILD_PER_FRAME, behind = false;
-  if (slots) {
-    for (const i of indicesIn(slots)) {
-      const p = prints[i];
-      let el = built.get(p.id);
-      if (!el && budget === 0) { behind = true; continue; }
-      want.add(p.id);
-      if (!el) {
-        budget--;
-        el = receipt(p);
-        el.dataset.id = p.id;
-        built.set(p.id, el);
-      }
-      const [x, y] = slotAt(i, cols, geo);
-      el.style.left = `${x}px`;
-      el.style.top = `${y}px`;
-      if (!shown.has(p.id)) { world.append(el); shown.add(p.id); }
-    }
-  }
-
-  for (const id of shown) {
-    if (want.has(id)) continue;
-    built.get(id)?.remove();
-    shown.delete(id);
-  }
-
-  // Forget the longest-unshown receipts once the cache is full.
-  for (const id of built.keys()) {
-    if (built.size <= CACHE + shown.size) break;
-    if (!shown.has(id)) built.delete(id);
-  }
-
-  return behind;
-}
-
-/* Each receipt as a sketch: the paper, its frame as bars, a bar per row of
-   text, and its photo once it is big enough to see. In passes by colour,
-   since changing colour is what costs. `skip` leaves out the ones already
-   shown as real receipts. */
-function paintSketches(slots, skip = () => false) {
-  const dpr = devicePixelRatio || 1;
+  const dpr = devicePixelRatio || 1, s = view.s;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, innerWidth, innerHeight);
 
-  const s = view.s, w = geo.w * s;
-  const items = [];
-  for (const i of indicesIn(slots)) {
-    if (skip(prints[i].id)) continue;
-    const [x, y] = slotAt(i, cols, geo);
-    items.push({ p: prints[i], x: view.x + x * s, y: view.y + y * s });
-  }
+  const want = LEVELS.find((k) => k >= s * dpr) ?? LEVELS[LEVELS.length - 1];
+  const deadline = performance.now() + FRAME_BUDGET;
+  let behind = false;
 
-  ctx.fillStyle = '#fff';
-  for (const { p, x, y } of items) ctx.fillRect(x, y, w, heightOf(p) * s);
-  if (w < 12) return;
+  const { c0, c1, r0, r1 } = visibleSlots(view, innerWidth, innerHeight, cols, rowCount(), grid, 0);
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const i = r * cols + c;
+      if (i >= prints.length) break;
+      const p = prints[i];
 
-  const frame = (bars, dy) => (it) => {
-    for (const b of bars) {
-      ctx.fillStyle = b.color;
-      ctx.fillRect(it.x + b.x * s, it.y + (b.y + dy(it.p)) * s + b.h * s * 0.25, b.w * s, b.h * s * 0.5);
-    }
-  };
-  const bodyBottom = (p) => geo.bodyY + bodyHeight(p);
-  items.forEach(frame(geo.head, () => 0));
-  items.forEach(frame(geo.foot, bodyBottom));
+      let t = tileAt(p, want);
+      if (!t && performance.now() < deadline) t = makeTile(p, want);
+      if (!t) {
+        behind = true;
+        t = nearestTile(p, want);
+      }
 
-  ctx.fillStyle = geo.ink;
-  const charW = geo.bodyW / COLS, lineH = geo.lineH;
-  for (const { p, x, y } of items) {
-    if (p.kind !== 'text') continue;
-    p.bars ??= rowLengths(p.text, COLS);
-    p.bars.forEach((len, k) => {
-      if (len) ctx.fillRect(x + geo.bodyX * s, y + (geo.bodyY + k * lineH + lineH * 0.3) * s, len * charW * s, lineH * 0.45 * s);
-    });
-  }
+      const [x, y] = slotAt(i, cols, grid);
+      const sx = view.x + (x - MARGIN) * s, sy = view.y + (y - MARGIN) * s;
+      const w = (L.w + 2 * MARGIN) * s, h = (heightOf(p) + 2 * MARGIN) * s;
 
-  for (const { p, x, y } of items) {
-    if (p.kind !== 'photo') continue;
-    const bx = x + geo.bodyX * s, by = y + geo.bodyY * s, bw = geo.bodyW * s, bh = bodyHeight(p) * s;
-    const img = w >= THUMB_WIDTH ? thumb(p) : null;
-    if (img?.complete && img.naturalWidth) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(img, bx, by, bw, bh);
-    } else {
-      ctx.fillStyle = '#9a9794';
-      ctx.fillRect(bx, by, bw, bh);
+      const since = arrivedAt.has(p.id) ? now - arrivedAt.get(p.id) : FADE_MS;
+      ctx.globalAlpha = Math.min(1, since / FADE_MS);
+      if (since < FADE_MS) behind = true;
+      else arrivedAt.delete(p.id);
+
+      if (t) ctx.drawImage(t, sx, sy, w, h);
+      else {
+        ctx.fillStyle = colors.paper;
+        ctx.fillRect(sx + MARGIN * s, sy + MARGIN * s, L.w * s, heightOf(p) * s);
+      }
     }
   }
+
+  ctx.globalAlpha = 1;
+  if (behind) redraw();
 }
 
-function thumb(p) {
-  let img = thumbs.get(p.id);
-  if (!img) {
-    img = new Image();
-    img.onload = redraw;
-    img.src = photoURL(p);
-    thumbs.set(p.id, img);
+/* Any tile of p, the closest size to k first. */
+function nearestTile(p, k) {
+  const byDistance = [...LEVELS].sort((a, b) => Math.abs(Math.log(a / k)) - Math.abs(Math.log(b / k)));
+  for (const level of byDistance) {
+    const t = tiles.get(`${p.id}@${level}`);
+    if (t) return t;
   }
-  return img;
+  return null;
 }
 
-function sizeSketch() {
+function sizeCanvas() {
   const dpr = devicePixelRatio || 1;
-  sketch.width = Math.round(innerWidth * dpr);
-  sketch.height = Math.round(innerHeight * dpr);
+  canvas.width = Math.round(innerWidth * dpr);
+  canvas.height = Math.round(innerHeight * dpr);
   redraw();
 }
 
-addEventListener('resize', sizeSketch);
+addEventListener('resize', sizeCanvas);
 
 /* ---- the camera ------------------------------------------------------- */
 
@@ -261,7 +189,7 @@ function zoom(cx, cy, k) {
 }
 
 function wallSize() {
-  return [geo.pad * 2 + cols * geo.pitchX - GAP, geo.pad * 2 + rowCount() * geo.pitchY - GAP];
+  return [grid.pad * 2 + cols * grid.pitchX - GAP, grid.pad * 2 + rowCount() * grid.pitchY - GAP];
 }
 
 function fitAll() {
@@ -282,10 +210,9 @@ function flyTo(i) {
   requestAnimationFrame(step);
 }
 
-/* The print under a screen point, if any. Arithmetic, not the DOM, so it
-   works the same over receipts and over sketches. */
+/* The print under a screen point, if any. */
 function printAt(cx, cy) {
-  const hit = slotUnder(view, cx, cy, cols, geo);
+  const hit = slotUnder(view, cx, cy, cols, grid);
   const p = hit && prints[hit.index];
   return p && hit.dy <= heightOf(p) ? p : null;
 }
@@ -304,7 +231,10 @@ viewport.addEventListener('pointerdown', (e) => {
 
 viewport.addEventListener('pointermove', (e) => {
   const prev = pointers.get(e.pointerId);
-  if (!prev) return;
+  if (!prev) {
+    viewport.classList.toggle('over', !!printAt(e.clientX, e.clientY));
+    return;
+  }
 
   if (pointers.size === 1) {
     view = { ...view, x: view.x + e.clientX - prev.x, y: view.y + e.clientY - prev.y };
@@ -355,12 +285,14 @@ viewport.addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 
-/* ---- one print, full size -------------------------------------------- */
+/* ---- one print, full size, as real HTML ------------------------------- */
 
 function open(id) {
   const p = prints[index.get(id)];
   if (!p) return;
-  detailSheet.replaceChildren(receipt(p, false));
+  const el = tpl.content.firstElementChild.cloneNode(true);
+  fillReceipt(el, p, COLS, photoURL(p), false);
+  detailSheet.replaceChildren(el);
   detailMeta.textContent = `${new Date(p.time).toLocaleString()}  #${id.slice(0, 8)}`;
   detail.dataset.id = id;
   history.replaceState(null, '', `#${id}`);
@@ -388,10 +320,8 @@ function remove(id) {
   prints.splice(i, 1);
   index.clear();
   prints.forEach((p, k) => index.set(p.id, k));
-  built.get(id)?.remove();
-  built.delete(id);
-  shown.delete(id);
-  thumbs.delete(id);
+  dropTiles(id);
+  photos.delete(id);
   if (detail.open && detail.dataset.id === id) detail.close();
   showCount();
   redraw();
@@ -406,11 +336,7 @@ function showCount() {
 
 function arrived(print) {
   if (!add(print)) return;
-  const el = receipt(print);
-  el.dataset.id = print.id;
-  el.classList.add('fresh');
-  el.addEventListener('animationend', () => el.classList.remove('fresh'), { once: true });
-  built.set(print.id, el);
+  arrivedAt.set(print.id, performance.now());
   showCount();
   fresh.hidden = false;
   redraw();
@@ -466,17 +392,19 @@ async function start() {
   // Listen first, so nothing printed during the load is missed; add()
   // ignores anything that arrives twice.
   listen();
-  // The receipt is measured in its real face: fonts.ready alone can resolve
-  // before the face has even been asked for, and a fallback is wider.
-  const [all] = await Promise.all([loadAll(), document.fonts.load('1em VT323')]);
-  geo = measure();
+  // Canvas text needs the face loaded, or it draws, and measures, a fallback.
+  const [all] = await Promise.all([loadAll(), document.fonts.load(`${FONT_SIZE}px ${FONT}`)]);
+
+  L = layout(ctx, FONT, FONT_SIZE, COLS, ROWS);
+  // Every slot is as tall as the tallest receipt, a square photo.
+  grid = { pad: GAP, pitchX: L.w + GAP, pitchY: receiptHeight(L, { kind: 'photo', rows: 384 }) + GAP, w: L.w };
+
   for (const p of all) add(p);
   showCount();
 
-  cols = columnsFor(prints.length, geo.pitchX, geo.pitchY, innerWidth, innerHeight);
-  const [W, H] = wallSize();
-  minScale = Math.min(0.5, fitBox(0, 0, W, H, innerWidth, innerHeight, MAX_SCALE).s * 0.8);
-  sizeSketch();
+  cols = columnsFor(prints.length, grid.pitchX, grid.pitchY, innerWidth, innerHeight);
+  minScale = Math.min(0.5, fitBox(0, 0, ...wallSize(), innerWidth, innerHeight, MAX_SCALE).s * 0.8);
+  sizeCanvas();
 
   loaded = true;
   waiting.splice(0).forEach((fn) => fn());

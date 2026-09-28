@@ -41,38 +41,15 @@
     outline: none;
   }
 
-  .viewport.grabbing { cursor: grabbing; }
-
-  .sketch {
+  .wall-canvas {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    pointer-events: none;
   }
 
-  /* Holds only the receipts on screen, each placed in its slot by
-     prints.js; the whole layer is moved and scaled as one. */
-  .world {
-    position: absolute;
-    top: 0;
-    left: 0;
-    transform-origin: 0 0;
-  }
-
-  /* Only while moving: a layer that stays promoted is scaled as a bitmap and
-     turns blurry, so it is dropped again once the wall is still. */
-  .world.moving { will-change: transform; }
-
-  /* One soft shadow, not the page's four. */
-  .world .roll {
-    position: absolute;
-    filter: drop-shadow(0 0 10px rgb(var(--shade) / 0.13));
-    cursor: pointer;
-  }
-
-  .world .roll.fresh { animation: fresh 1.4s ease-out; }
-  @keyframes fresh { from { opacity: 0; transform: translateY(-48px); } }
+  .viewport.over { cursor: pointer; }
+  .viewport.grabbing { cursor: grabbing; }
 
   .wall-new {
     position: fixed;

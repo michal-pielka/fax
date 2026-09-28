@@ -19,16 +19,14 @@
      scroll or pinch to zoom, click one to read it. -->
 <div class="viewport" id="viewport" tabindex="0"
      aria-label="Every print. Drag to move, scroll or pinch to zoom, click a receipt to open it.">
-  <!-- Far out: every receipt on screen, sketched. -->
-  <canvas class="sketch" id="sketch" aria-hidden="true"></canvas>
-  <!-- Close up: the receipts on screen, as real ones. -->
-  <div class="world" id="world"></div>
+  <canvas class="wall-canvas" id="wall" aria-hidden="true"></canvas>
 </div>
 
 <button class="wall-new" id="fresh" hidden>NEW PRINT</button>
 <div class="status" id="status" role="status" aria-live="polite"></div>
 
-<!-- Must match the receipt in index.html, which matches what prints. -->
+<!-- The full-size receipt in the dialog. Must match the one in index.html,
+     which matches what prints; js/tile.js draws the wall's to the same plan. -->
 <template id="receipt">
   <div class="roll">
     <div class="paper">
