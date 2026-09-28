@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rowsOf, rowLengths, longestPrefix } from '../js/paper.js';
+import { rowsOf, rowLengths, rowRanges, longestPrefix } from '../js/paper.js';
 
 // The same cases as backend/internal/doc TestRowsOf: both ends must agree.
 test('rowsOf matches the server', () => {
@@ -21,4 +21,10 @@ test('rowLengths wraps like rowsOf counts', () => {
   assert.deepEqual(rowLengths('hi\n\nthere', 32), [2, 0, 5]);
   assert.deepEqual(rowLengths('a'.repeat(70), 32), [32, 32, 6]);
   for (const t of ['', 'a'.repeat(64), 'x\ny\n']) assert.equal(rowLengths(t, 32).length, rowsOf(t, 32));
+});
+
+test('rowRanges wraps like rowsOf counts', () => {
+  assert.deepEqual(rowRanges('hi\n\nthere', 32), [[0, 2], [3, 3], [4, 9]]);
+  assert.deepEqual(rowRanges('a'.repeat(70), 32), [[0, 32], [32, 64], [64, 70]]);
+  for (const t of ['', 'a'.repeat(64), 'x\ny\n']) assert.equal(rowRanges(t, 32).length, rowsOf(t, 32));
 });

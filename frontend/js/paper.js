@@ -21,6 +21,19 @@ export function rowLengths(text, cols) {
   return rows;
 }
 
+/* Every printed row as [start, end) offsets into the text: each line
+   hard-wrapped at `cols`, as the printer does. The wall draws text by these. */
+export function rowRanges(text, cols) {
+  const rows = [];
+  let start = 0;
+  for (const line of text.split('\n')) {
+    if (!line.length) rows.push([start, start]);
+    for (let i = 0; i < line.length; i += cols) rows.push([start + i, start + Math.min(line.length, i + cols)]);
+    start += line.length + 1;
+  }
+  return rows;
+}
+
 /* The longest prefix of `s` that `ok` accepts, given that every shorter
    prefix of an accepted one is accepted too. A binary search, because a
    paste can be far too big to try one character at a time. */
