@@ -1,3 +1,9 @@
+{
+	# rate_limit is a plugin (deploy/caddy/Dockerfile), so Caddy has no
+	# built-in place for it among the other handlers.
+	order rate_limit before basic_auth
+}
+
 fax.pielka.sh {
 	encode gzip
 
@@ -13,6 +19,26 @@ fax.pielka.sh {
 	@banned remote_ip {$FAX_BANNED}
 	handle @banned {
 		abort
+	}
+
+	# Three prints per ten minutes per address, refused prints included.
+	# Everything else, the page and the wall, is never limited.
+	rate_limit {
+		zone prints {
+			match {
+				method POST
+				path /api/print
+			}
+			key {client_ip}
+			events 3
+			window 10m
+		}
+	}
+
+	# The page shows a refusal's "error" field, so say it in its words.
+	handle_errors 429 {
+		header Content-Type application/json
+		respond `{"error":"too many prints, try again in a few minutes"}` 429
 	}
 
 	handle /mqtt* {
