@@ -29,8 +29,10 @@ const FONT = 'VT323';
 const GAP = 64;
 /* Past this the text is larger than on the real page, and no clearer. */
 const MAX_SCALE = 1.5;
-/* Tile sizes, each half the next. A frame uses the smallest one that is at
-   least as sharp as the screen needs. */
+/* Tile sizes, each half the next. A frame draws the level nearest what the
+   screen needs -- never worse than ~1.4x soft -- because a coarser level
+   covers four times the wall from the same cache, and blitting up is
+   cheaper than blitting down. */
 const LEVELS = [1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4];
 /* Milliseconds a frame may spend drawing new tiles; the rest wait for the
    next frame, shown meanwhile at whatever size is at hand. */
@@ -129,7 +131,7 @@ function draw(now) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, innerWidth, innerHeight);
 
-  const want = LEVELS.find((k) => k >= s * dpr) ?? LEVELS[LEVELS.length - 1];
+  const want = LEVELS.find((k) => k >= s * dpr * Math.SQRT1_2) ?? LEVELS[LEVELS.length - 1];
   const deadline = performance.now() + FRAME_BUDGET;
   let behind = false;
 
