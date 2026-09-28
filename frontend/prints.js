@@ -35,7 +35,8 @@ const LEVELS = [1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4];
 /* Milliseconds a frame may spend drawing new tiles; the rest wait for the
    next frame, shown meanwhile at whatever size is at hand. */
 const FRAME_BUDGET = 6;
-/* Pixels of tiles kept, about 100 MB. The least recently used go first. */
+/* Pixels of tiles kept, about 100 MB. The least recently used go first.
+   A floor, not the budget: draw() raises it to hold what is on screen. */
 const PIXEL_BUDGET = 24e6;
 const FADE_MS = 600;
 
@@ -50,6 +51,7 @@ const tiles = new Map(); // `${id}@${level}` -> canvas, oldest use first
 const photos = new Map(); // id -> Image
 const arrivedAt = new Map(); // id -> time it came in live, for the fade
 let tilePixels = 0;
+let budget = PIXEL_BUDGET;
 let view = { x: 0, y: 0, s: 1 };
 let minScale = 0.05;
 let cols = 1;
@@ -88,7 +90,7 @@ function makeTile(p, k) {
   tiles.set(key, t);
   tilePixels += t.width * t.height;
   for (const [old, o] of tiles) {
-    if (tilePixels <= PIXEL_BUDGET || old === key) break;
+    if (tilePixels <= budget || old === key) break;
     tiles.delete(old);
     tilePixels -= o.width * o.height;
   }
@@ -132,6 +134,16 @@ function draw(now) {
   let behind = false;
 
   const { c0, c1, r0, r1 } = visibleSlots(view, innerWidth, innerHeight, cols, rowCount(), grid, 0);
+
+  /* The cache must hold what is on screen, with slack to pan into. Zoomed
+     out a little, this level's tiles are big enough that the flat budget
+     would evict tiles drawn this frame and remake them the next, forever. */
+  budget = Math.max(PIXEL_BUDGET,
+    2 * (c1 - c0 + 1) * (r1 - r0 + 1) * Math.ceil(grid.pitchX * want) * Math.ceil(grid.pitchY * want));
+
+  /* Fades only happen just after a live print; skip the bookkeeping then. */
+  const fading = arrivedAt.size > 0;
+
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
       const i = r * cols + c;
@@ -145,14 +157,16 @@ function draw(now) {
         t = nearestTile(p, want);
       }
 
-      const [x, y] = slotAt(i, cols, grid);
-      const sx = view.x + (x - MARGIN) * s, sy = view.y + (y - MARGIN) * s;
+      const sx = view.x + (grid.pad + c * grid.pitchX - MARGIN) * s;
+      const sy = view.y + (grid.pad + r * grid.pitchY - MARGIN) * s;
       const w = (L.w + 2 * MARGIN) * s, h = (heightOf(p) + 2 * MARGIN) * s;
 
-      const since = arrivedAt.has(p.id) ? now - arrivedAt.get(p.id) : FADE_MS;
-      ctx.globalAlpha = Math.min(1, since / FADE_MS);
-      if (since < FADE_MS) behind = true;
-      else arrivedAt.delete(p.id);
+      if (fading) {
+        const since = arrivedAt.has(p.id) ? now - arrivedAt.get(p.id) : FADE_MS;
+        ctx.globalAlpha = Math.min(1, since / FADE_MS);
+        if (since < FADE_MS) behind = true;
+        else arrivedAt.delete(p.id);
+      }
 
       if (t) ctx.drawImage(t, sx, sy, w, h);
       else {
