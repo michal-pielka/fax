@@ -46,6 +46,19 @@ It pulls the checkout (frontend, Caddyfile and Mosquitto config are mounted
 from it, not baked into images), pulls the images, restarts what changed,
 and restarts Mosquitto or reloads Caddy only if their config changed.
 
+## Rate limit
+
+Caddy allows each address three `POST /api/print` per ten minutes and
+answers the rest with `429` and a message the page shows. The page, the
+wall and the rest of the API are never limited. Change it in the
+`rate_limit` block of the Caddyfile; `update.sh` restarts Caddy when that
+file changes. The counts live in Caddy's memory and reset on a restart.
+
+Stock Caddy has no rate limiting, so the stack runs its own Caddy image
+(`deploy/caddy/Dockerfile`), built by the images workflow as `fax-caddy`.
+Like the other packages it starts out private, which the registry login
+above already covers.
+
 ## The wall at /prints
 
 Every print the printer confirms is appended to `prints.jsonl` in the `wall`
