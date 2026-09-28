@@ -59,6 +59,9 @@ export function sheet(roll, { canGrab, onThrow }) {
   roll.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || !canGrab(e)) return;
     if (phase === 'fly' || phase === 'gone' || phase === 'arrive') return;
+    /* A second finger must not steal the drag: its release would be ignored
+       and the receipt left hanging until it let go. */
+    if (drag) return;
 
     /* No default: the press must not start a text selection, and must not
        take focus from the writing area. */
