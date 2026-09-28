@@ -10,6 +10,17 @@ export function rowsOf(text, cols) {
   return rows;
 }
 
+/* The length of every printed row: each line hard-wrapped at `cols`, as
+   the printer does. The zoomed-out wall draws a text as these bars. */
+export function rowLengths(text, cols) {
+  const rows = [];
+  for (const line of text.split('\n')) {
+    if (!line.length) { rows.push(0); continue; }
+    for (let i = 0; i < line.length; i += cols) rows.push(Math.min(cols, line.length - i));
+  }
+  return rows;
+}
+
 /* The longest prefix of `s` that `ok` accepts, given that every shorter
    prefix of an accepted one is accepted too. A binary search, because a
    paste can be far too big to try one character at a time. */
