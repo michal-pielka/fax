@@ -18,6 +18,10 @@ const detail = $('detail'), detailSheet = $('detailSheet'), detailMeta = $('deta
 const fresh = $('fresh'), count = $('count'), status = $('status');
 const ctx = canvas.getContext('2d');
 
+/* Past 2 the extra pixels are invisible, and a 3x phone would otherwise
+   paint a canvas nine times the window's size. */
+const pixelRatio = () => Math.min(devicePixelRatio || 1, 2);
+
 /* The receipt's type size on the wall: fixed, so the layout never depends
    on the window. The page's own maximum, so zoom 1 is the real thing. */
 const FONT_SIZE = 31;
@@ -119,7 +123,7 @@ function redraw() {
 
 function draw(now) {
   queued = false;
-  const dpr = devicePixelRatio || 1, s = view.s;
+  const dpr = pixelRatio(), s = view.s;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, innerWidth, innerHeight);
 
@@ -180,7 +184,7 @@ function nearestTile(p, k) {
 }
 
 function sizeCanvas() {
-  const dpr = devicePixelRatio || 1;
+  const dpr = pixelRatio();
   canvas.width = Math.round(innerWidth * dpr);
   canvas.height = Math.round(innerHeight * dpr);
   redraw();
