@@ -325,15 +325,18 @@ async function submit() {
   let ok = false, message = '';
 
   try {
-    const res = await fetch('/api/print', { method: 'POST', ...request });
+    /* The server answers within its own chain of timeouts (35s at worst);
+       a little past that, a silent connection is declared dead rather than
+       leaving the sheet flown and the page stuck on "printing...". */
+    const res = await fetch('/api/print', { method: 'POST', signal: AbortSignal.timeout(45000), ...request });
 
     if (res.ok) ok = true;
     else {
       const { error } = await res.json().catch(() => ({}));
       message = error || `failed (${res.status})`;
     }
-  } catch {
-    message = 'could not reach the printer';
+  } catch (err) {
+    message = err?.name === 'TimeoutError' ? 'the printer is not answering' : 'could not reach the printer';
   }
 
   await gone;
