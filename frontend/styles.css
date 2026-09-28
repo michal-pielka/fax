@@ -454,6 +454,8 @@
 
   .about .prose p { margin: 0 0 0.7em; }
   .about .prose p:last-child { margin-bottom: 0; }
+  /* The wall's address, underlined like a link on paper would be. */
+  .about .prose a { color: inherit; }
 
   .sr-only {
     position: absolute;
