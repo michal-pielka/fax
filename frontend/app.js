@@ -31,6 +31,10 @@ let mode = 0;
 /* The value after the last edit we accounted for. */
 let lastText = '';
 
+/* Set by checkPrinter: while true, the standing message is the offline
+   warning, and typing must not talk over it. */
+let offline = false;
+
 const selectionHas = (bit) => rangeHas(ta.value, styles, ta.selectionStart, ta.selectionEnd, bit);
 
 /* A key with text selected styles the selection and nothing else. With no
@@ -174,7 +178,7 @@ ta.addEventListener('input', () => {
   lastText = ta.value;
   render();
   syncKeys();
-  setStatus(hint());
+  refreshStatus();
 });
 
 ta.addEventListener('keydown', (e) => {
@@ -197,6 +201,14 @@ function setStatus(msg, bad) {
 /* The only instruction on the page, and only once there is something to
    print. Replaced by whatever happens next. */
 const hint = () => (photo || ta.value.trim() ? 'slide the receipt up to print' : '');
+
+/* The standing message: the offline warning while the printer is off,
+   otherwise the hint. Transient messages (printing..., errors) set the
+   status directly. */
+function refreshStatus() {
+  if (offline) setStatus('printer is offline', true);
+  else setStatus(hint());
+}
 
 /* ---- a photo instead of words ---------------------------------------- */
 
@@ -271,7 +283,7 @@ function setPhoto(p) {
     ta.focus();
   }
 
-  setStatus(hint());
+  refreshStatus();
 }
 
 file.addEventListener('change', () => { if (file.files[0]) loadPhoto(file.files[0]); file.value = ''; });
@@ -380,8 +392,10 @@ async function checkPrinter() {
     return; /* Unknown is not offline. Let the print request decide. */
   }
 
-  if (!s.online) setStatus('printer is offline', true);
-  else if (status.textContent === 'printer is offline') setStatus('');
+  /* Refresh the standing message only when it changed or went stale; a
+     transient one (printing..., an error) is left alone. */
+  offline = !s.online;
+  if (offline || status.textContent === 'printer is offline') refreshStatus();
 }
 
 checkPrinter();
