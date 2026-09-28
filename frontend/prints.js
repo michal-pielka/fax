@@ -162,12 +162,19 @@ function draw(now) {
   if (behind) redraw();
 }
 
-/* Any tile of p, the closest size to k first. */
+/* Any tile of p, walking out from k's own size, the sharper of two equally
+   near sizes first. No sort: k is always one of LEVELS. */
 function nearestTile(p, k) {
-  const byDistance = [...LEVELS].sort((a, b) => Math.abs(Math.log(a / k)) - Math.abs(Math.log(b / k)));
-  for (const level of byDistance) {
-    const t = tiles.get(`${p.id}@${level}`);
-    if (t) return t;
+  const i = LEVELS.indexOf(k);
+  for (let d = 0; d < LEVELS.length; d++) {
+    if (i + d < LEVELS.length) {
+      const t = tiles.get(`${p.id}@${LEVELS[i + d]}`);
+      if (t) return t;
+    }
+    if (d && i - d >= 0) {
+      const t = tiles.get(`${p.id}@${LEVELS[i - d]}`);
+      if (t) return t;
+    }
   }
   return null;
 }
