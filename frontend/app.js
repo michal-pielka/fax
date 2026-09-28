@@ -191,7 +191,7 @@ ta.addEventListener('keydown', (e) => {
 
 /* The textarea scrolls to chase the caret even with the content fitting,
    by a pixel or two on some platforms; the mirror would not follow. */
-ta.addEventListener('scroll', () => { ta.scrollTop = 0; });
+ta.addEventListener('scroll', () => { ta.scrollTop = ta.scrollLeft = 0; });
 
 function setStatus(msg, bad) {
   status.textContent = msg;
