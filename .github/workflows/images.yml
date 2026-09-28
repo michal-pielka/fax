@@ -1,10 +1,12 @@
-# Bake the three service images on every push to main and put them in the
-# GitHub Container Registry. The VPS never compiles anything: it pulls these.
+# Bake the service images on every push to main and put them in the GitHub
+# Container Registry. The VPS never compiles anything: it pulls these.
 #
 #   ghcr.io/michal-pielka/fax-gateway
 #   ghcr.io/michal-pielka/fax-renderer
 #   ghcr.io/michal-pielka/fax-dispatcher
+#   ghcr.io/michal-pielka/fax-caddy      Caddy with the rate_limit plugin
 #
+# All four are built together, so every commit tag exists for each of them.
 # each tagged `latest` and with the commit that built it, so a bad deploy
 # can be rolled back by name (see deploy/update.sh).
 name: images
@@ -14,6 +16,7 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "deploy/caddy/**"
       - ".github/workflows/images.yml"
   workflow_dispatch:
 
@@ -26,7 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [gateway, renderer, dispatcher]
+        include:
+          - { service: gateway, context: backend, file: backend/cmd/gateway/Dockerfile }
+          - { service: renderer, context: backend, file: backend/cmd/renderer/Dockerfile }
+          - { service: dispatcher, context: backend, file: backend/cmd/dispatcher/Dockerfile }
+          - { service: caddy, context: deploy/caddy, file: deploy/caddy/Dockerfile }
 
     steps:
       - uses: actions/checkout@v4
@@ -50,8 +57,8 @@ jobs:
       # VPS needed from scratch.
       - uses: docker/build-push-action@v6
         with:
-          context: backend
-          file: backend/cmd/${{ matrix.service }}/Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           platforms: linux/amd64
           push: true
           tags: |

@@ -3,8 +3,8 @@
 
 name: fax
 
-# The three Go services are pulled from the registry, where GitHub Actions put
-# them (see .github/workflows/images.yml). FAX_TAG pins a commit; unset is
+# The Go services and Caddy are pulled from the registry, where GitHub Actions
+# put them (see .github/workflows/images.yml). FAX_TAG pins a commit; unset is
 # latest. `build:` stays for development: `docker compose up --build` compiles
 # here instead. The VPS never passes --build.
 
@@ -16,7 +16,10 @@ x-logging: &logging
 
 services:
   caddy:
-    image: caddy:2-alpine
+    # Stock Caddy plus the rate_limit plugin; see deploy/caddy/Dockerfile.
+    image: ghcr.io/michal-pielka/fax-caddy:${FAX_TAG:-latest}
+    build:
+      context: ./deploy/caddy
     restart: unless-stopped
     logging: *logging
     ports:
