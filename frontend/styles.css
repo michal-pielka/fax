@@ -350,7 +350,7 @@
     width: 2.2em;
     height: 2.2em;
     padding: 0;
-    border: 1px solid var(--ink);
+    border: 0;
     background: transparent;
     /* The ink the receipts are written in, nothing lighter. */
     color: var(--ink);
@@ -374,7 +374,6 @@
     align-items: center;
     height: 2.2em;
     padding: 0 0.9em;
-    border: 1px solid var(--ink);
     color: var(--ink);
     font-size: clamp(15px, 1.6vw, 18px);
     line-height: 1;
